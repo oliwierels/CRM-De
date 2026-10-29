@@ -715,7 +715,8 @@ def calculator_save():
 _MAIL_LOCK = threading.Lock()
 MAIL_SINCE_KEY = "mail_since"
 MAIL_SYNC_KEY = "mail_last_sync"
-MAIL_POLL_SECONDS = 300
+MAIL_POLL_SECONDS = 60  # neue Leads: Mail + Benachrichtigung spätestens nach einer Minute
+MAILBOX_EVERY_TICKS = 5  # Postfach-Verlauf alle 5 Minuten
 CALLBACK_SLOTS = {"vormittag": "9–12 Uhr", "mittag": "12–15 Uhr", "nachmittag": "15–18 Uhr", "egal": "jederzeit"}
 WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 _BASE = {"url": ""}
@@ -765,12 +766,31 @@ def _add_comment(lead_id, text, source, when=None, user_id=None):
                            created_at=when or datetime.utcnow()))
 
 
-def send_customer_mail(lead, user_id=None):
+ALREADY_SENT = "bereits gesendet"
+
+
+def _claim_customer_mail(lead_id):
+    """Reserviert den Versand atomar (mail_sent_at NULL → jetzt). False = Automatik oder ein zweiter
+    Klick hat gerade gesendet — dann kein zweites Mal."""
+    res = db.session.execute(db.update(Lead).where(Lead.id == lead_id, Lead.mail_sent_at.is_(None))
+                             .values(mail_sent_at=datetime.utcnow()))
+    db.session.commit()
+    return res.rowcount == 1
+
+
+def send_customer_mail(lead, user_id=None, resend=False):
     if not lead.emails:
         return "Lead hat keine E-Mail-Adresse"
+    lead_id = lead.id
+    if not resend and not _claim_customer_mail(lead_id):
+        return ALREADY_SENT
+    lead = db.session.get(Lead, lead_id)
     subject, body = customer_mail(lead)
     msg_id, err = mailer.send(lead.emails, subject, body)
     if err:
+        if not resend:  # Reservierung freigeben — die Automatik versucht es erneut
+            db.session.execute(db.update(Lead).where(Lead.id == lead_id).values(mail_sent_at=None))
+            db.session.commit()
         return err
     lead.mail_sent_at = datetime.utcnow()
     if msg_id:
@@ -817,8 +837,11 @@ def notify_new_lead(lead):
         lead.notified_at = datetime.utcnow()
 
 
+_TICKS = {"n": 0}
+
+
 def mail_tick():
-    """Ein Durchlauf: Benachrichtigung + Kunden-Mail für neue Leads, dann Postfach-Verlauf."""
+    """Ein Durchlauf: Benachrichtigung + Kunden-Mail für neue Leads, dann (jedes 5. Mal) Postfach-Verlauf."""
     if not mailer.configured():
         return
     since = get_setting(MAIL_SINCE_KEY)
@@ -835,11 +858,13 @@ def mail_tick():
         auto = os.environ.get("AUTO_MAIL", "1") != "0"
         if auto and base_ok and not lead.mail_sent_at and lead.emails and lead.status == STATUS_OPEN:
             tries = int(get_setting(f"mail_tries:{lead.id}") or 0)
-            if tries < 3 and send_customer_mail(lead):
+            if tries < 3 and send_customer_mail(lead) not in (None, ALREADY_SENT):
                 db.session.rollback()
                 set_setting(f"mail_tries:{lead.id}", str(tries + 1))
                 db.session.commit()
-    sync_mailbox()
+    _TICKS["n"] += 1
+    if _TICKS["n"] % MAILBOX_EVERY_TICKS == 1:
+        sync_mailbox()
 
 
 def sync_mailbox(days_back=None, stats=None):
@@ -973,7 +998,7 @@ def customer_mail_backlog():
                     lead = db.session.get(Lead, lid)
                     if lead and not lead.mail_sent_at and lead.emails:
                         err = send_customer_mail(lead, user_id=uid)
-                        if err:
+                        if err and err != ALREADY_SENT:
                             db.session.rollback()
                             _add_comment(lid, f"⚠️ Kunden-E-Mail nicht gesendet: {err}", "system")
                             db.session.commit()
@@ -992,7 +1017,10 @@ def customer_mail_backlog():
 def lead_customer_mail(lead_id):
     lead = db.session.get(Lead, lead_id) or abort(404)
     me = current_user()
-    err = send_customer_mail(lead, user_id=me.id if me else None)
+    err = send_customer_mail(lead, user_id=me.id if me else None, resend=request.form.get("resend") == "1")
+    if err == ALREADY_SENT:
+        flash("Die E-Mail wurde gerade automatisch gesendet — kein zweites Mal.")
+        return redirect(url_for("lead_detail", lead_id=lead.id))
     if err:
         db.session.rollback()
     flash(f"E-Mail nicht gesendet: {err}" if err else "E-Mail an den Kunden gesendet.")

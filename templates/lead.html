@@ -74,7 +74,8 @@
         {% endif %}
         {% if lead.emails and mail_ready() %}
         <form method="post" action="{{ url_for('lead_customer_mail', lead_id=lead.id) }}" style="margin-top:8px"
-              onsubmit="return confirm('E-Mail mit Rückruf-Link an {{ lead.emails|join(', ') }} senden?')">
+              onsubmit="if (!confirm('{{ 'Die E-Mail wurde schon gesendet. ERNEUT senden' if lead.mail_sent_at else 'E-Mail mit Rückruf-Link senden' }} an {{ lead.emails|join(', ') }}?')) return false; this.querySelector('button').disabled = true; return true;">
+          {% if lead.mail_sent_at %}<input type="hidden" name="resend" value="1">{% endif %}
           <button class="btn btn-secondary btn-sm"><i class="bi bi-send"></i> {{ 'Erneut senden' if lead.mail_sent_at else 'Kunden-E-Mail jetzt senden' }}</button>
         </form>
         {% endif %}
