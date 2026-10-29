@@ -61,6 +61,26 @@
   </div>
 
   <div class="gap10" style="gap:14px">
+    <div class="panel" style="{{ 'border-color:var(--yellow)' if lead.callback_date and lead.status == STATUS_OPEN }}">
+      <div class="panel-header"><i class="bi bi-telephone"></i> Rückruf</div>
+      <div class="panel-body" style="font-size:12.5px">
+        {% if lead.callback_date %}
+          <div style="font-size:16px;font-weight:700;color:var(--yellow)">📞 {{ callback_label(lead) }}</div>
+          <div class="muted">Wunschtermin des Kunden{% if lead.contact_phone %} · <a href="tel:{{ lead.contact_phone }}" style="color:var(--accent)">{{ lead.contact_phone }}</a>{% endif %}</div>
+        {% elif lead.mail_sent_at %}
+          <div>✉️ Kunde angeschrieben am {{ lead.mail_sent_at|dt }} — noch kein Rückruftermin gewählt.</div>
+        {% else %}
+          <div class="muted">Dem Kunden wurde noch keine E-Mail mit Rückruf-Link gesendet.</div>
+        {% endif %}
+        {% if lead.emails and mail_ready() %}
+        <form method="post" action="{{ url_for('lead_customer_mail', lead_id=lead.id) }}" style="margin-top:8px"
+              onsubmit="return confirm('E-Mail mit Rückruf-Link an {{ lead.emails|join(', ') }} senden?')">
+          <button class="btn btn-secondary btn-sm"><i class="bi bi-send"></i> {{ 'Erneut senden' if lead.mail_sent_at else 'Kunden-E-Mail jetzt senden' }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
     {% if lead.emails %}
     <div class="panel">
       <div class="panel-header"><i class="bi bi-envelope"></i> E-Mail schreiben</div>
@@ -79,15 +99,20 @@
     {% endif %}
 
     <div class="panel">
-      <div class="panel-header"><i class="bi bi-chat-left-text"></i> Kommentare ({{ lead.comments|length }})</div>
+      <div class="panel-header"><i class="bi bi-chat-left-text"></i> Kommentare & E-Mail-Verlauf ({{ lead.comments|length }})</div>
       <div class="panel-body">
         <form method="post" action="{{ url_for('lead_comment', lead_id=lead.id) }}" class="row" style="align-items:flex-start">
           <textarea name="text" rows="2" placeholder="{{ 'Kommentar als ' ~ me.name if me else 'Kommentar (links auswählen, wer du bist)' }}" required></textarea>
           <button class="btn btn-primary">Hinzufügen</button>
         </form>
         {% for c in lead.comments %}
-          <div style="border-top:1px solid var(--border);padding-top:9px;margin-top:10px">
-            <div class="small muted">{% if c.author %}<span style="color:{{ user_color(c.author) }};font-weight:600">{{ c.author.name }}</span>{% else %}Unbekannt{% endif %} · {{ c.created_at|dt }}</div>
+          <div style="border-top:1px solid var(--border);padding-top:9px;margin-top:10px;{{ 'border-left:3px solid var(--accent);padding-left:9px' if c.source == 'mail_out' else 'border-left:3px solid var(--green);padding-left:9px' if c.source == 'mail_in' else '' }}">
+            <div class="small muted">
+              {% if c.source == 'mail_in' %}<span style="color:var(--green);font-weight:600">Kunde</span> · E-Mail
+              {% elif c.source == 'mail_out' %}<span style="color:var(--accent);font-weight:600">Oliwier (33bots)</span> · E-Mail
+              {% elif c.source == 'system' %}<span style="color:var(--yellow);font-weight:600">Formular</span>
+              {% elif c.author %}<span style="color:{{ user_color(c.author) }};font-weight:600">{{ c.author.name }}</span>
+              {% else %}Unbekannt{% endif %} · {{ c.created_at|dt }}</div>
             <div style="white-space:pre-wrap">{{ c.text }}</div>
           </div>
         {% else %}

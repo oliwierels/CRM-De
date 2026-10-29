@@ -36,6 +36,31 @@ Zasady (`pricing.py`):
 Stawek nie widać w CRM — ustawia się je zmiennymi w Railway (niżej). Kilometry: OpenStreetMap
 (Nominatim + OSRM); gdy serwis nie odpowiada — szacunek (linia prosta × 1,25).
 
+## E-maile: klient, powiadomienia, historia korespondencji
+
+Gdy podpięta jest skrzynka **o.latek@33bots.de** (zmienne niżej), co 5 minut:
+
+- **Mail do klienta** (po niemiecku) przy każdym nowym leadzie z adresem e-mail: podziękowanie, kilka pytań
+  o event, przede wszystkim — **kiedy możemy zadzwonić**. Link do 30-sekundowego formularza `/r/<token>`
+  (dzień + przedział godzin + telefon, szczegóły eventu opcjonalnie). Wybrany termin pojawia się przy leadzie
+  („📞 Rückruf: Mi, 05.11.2026, 9–12 Uhr”) i na liście leadów.
+- **Powiadomienie dla zespołu Posevo** (osoby z e-mailem w zakładce Team + `NOTIFY_EMAILS`): nowy lead,
+  wybrany termin oddzwonienia, odpowiedź klienta na maila.
+- **Historia korespondencji**: maile między o.latek@33bots.de a klientem (Odebrane i Wysłane, także pisane
+  ręcznie w programie pocztowym) trafiają do komentarzy leada — bez cytowanej poprzedniej treści.
+- Tylko leady dodane po podpięciu skrzynki; starszym można wysłać mail przyciskiem na karcie leada.
+
+| Zmienna | Opis |
+|---|---|
+| `SMTP_HOST` | serwer poczty 33bots.de |
+| `SMTP_PORT` | 587 (STARTTLS, domyślnie) albo 465 (SSL) |
+| `SMTP_USER` | domyślnie `o.latek@33bots.de` |
+| `SMTP_PASS` | hasło do skrzynki |
+| `IMAP_HOST` / `IMAP_PORT` | jeśli inne niż SMTP / 993 |
+| `PUBLIC_URL` | adres CRM (np. `https://web-production-218a3.up.railway.app`) — do linków w mailach |
+| `NOTIFY_EMAILS` | opcjonalnie dodatkowe adresy powiadomień, po przecinku |
+| `AUTO_MAIL=0` / `NOTIFY=0` | wyłącza mail do klienta / powiadomienia |
+
 ## Wdrożenie na Railway
 
 1. Nowy projekt → Deploy from GitHub → to repo.

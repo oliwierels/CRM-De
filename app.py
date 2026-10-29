@@ -7,14 +7,16 @@ Keine Logins und Passwörter — wer gerade arbeitet, wählt sich oben aus der T
 import math
 import os
 import re
+import secrets
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template, request, url_for
 from flask_sqlalchemy import SQLAlchemy
 
+import mailer
 import pricing
 
 app = Flask(__name__)
@@ -59,6 +61,12 @@ class Lead(db.Model):
     signed_at = db.Column(db.DateTime)
     price_eur = db.Column(db.Float)  # Angebotspreis netto aus dem Kalkulator (inkl. Anfahrt)
     price_note = db.Column(db.Text)  # Aufschlüsselung der Kalkulation
+    mail_sent_at = db.Column(db.DateTime)  # automatische E-Mail an den Kunden (Rückruftermin erfragen)
+    notified_at = db.Column(db.DateTime)  # Team über neuen Lead benachrichtigt
+    form_token = db.Column(db.String(40), index=True)  # Link zum Rückruf-Formular
+    form_filled_at = db.Column(db.DateTime)
+    callback_date = db.Column(db.Date)  # Wunschtermin für den Rückruf
+    callback_slot = db.Column(db.String(40))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -84,9 +92,16 @@ class Comment(db.Model):
     lead_id = db.Column(db.Integer, db.ForeignKey("leads.id"), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     text = db.Column(db.Text, nullable=False)
+    source = db.Column(db.String(20))  # None = Team, mail_in / mail_out = E-Mail-Verlauf, system
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     author = db.relationship("User")
+
+
+class MailSeen(db.Model):
+    """Schon übernommene E-Mails (Message-ID), damit nichts doppelt im Verlauf landet."""
+    __tablename__ = "mail_seen"
+    message_id = db.Column(db.String(320), primary_key=True)
 
 
 class GeoCache(db.Model):
@@ -688,6 +703,257 @@ def calculator_save():
     return redirect(url_for("lead_detail", lead_id=lead.id))
 
 
+# ---------- E-MAIL: Kunden-Mail, Rückruf-Formular, Benachrichtigungen, Verlauf ----------
+# Neue Leads bekommen automatisch eine E-Mail von o.latek@33bots.de: kurze Fragen zur Veranstaltung,
+# vor allem — wann dürfen wir anrufen? Link zu einem 30-Sekunden-Formular (Wunschtag + Zeitfenster).
+# Das Team bekommt eine E-Mail bei jedem neuen Lead, bei einem Rückrufwunsch und bei einer Antwort
+# des Kunden. Der Schriftverkehr aus dem Postfach (Eingang + Gesendet) erscheint als Kommentare.
+# Nur Leads, die nach dem Einschalten neu dazukommen; ältere per Knopf auf der Lead-Seite.
+
+MAIL_SINCE_KEY = "mail_since"
+MAIL_SYNC_KEY = "mail_last_sync"
+MAIL_POLL_SECONDS = 300
+CALLBACK_SLOTS = {"vormittag": "9–12 Uhr", "mittag": "12–15 Uhr", "nachmittag": "15–18 Uhr", "egal": "jederzeit"}
+WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+_BASE = {"url": ""}
+
+
+@app.before_request
+def _remember_base():
+    if not _BASE["url"]:
+        _BASE["url"] = request.url_root.rstrip("/")
+
+
+def public_base_url():
+    return os.environ.get("PUBLIC_URL", "").strip().rstrip("/") or _BASE["url"]
+
+
+def lead_form_url(lead):
+    if not lead.form_token:
+        lead.form_token = secrets.token_urlsafe(18)
+    base = public_base_url()
+    return f"{base}/r/{lead.form_token}" if base else ""
+
+
+def callback_label(lead):
+    if not lead.callback_date:
+        return ""
+    d = lead.callback_date
+    return f"{WEEKDAYS[d.weekday()]}, {d:%d.%m.%Y}, {CALLBACK_SLOTS.get(lead.callback_slot, lead.callback_slot or '')}".rstrip(", ")
+
+
+def customer_mail(lead):
+    link = lead_form_url(lead)
+    greet = f"Guten Tag {lead.contact_name}," if lead.contact_name else "Guten Tag,"
+    subject = "Ihre Anfrage: humanoider Roboter für Ihre Veranstaltung – 33bots"
+    ask = (f"Wann passt Ihnen ein kurzer Rückruf? Hier können Sie in 30 Sekunden einen Termin wählen:\n{link}\n\n"
+           "Oder antworten Sie einfach auf diese E-Mail") if link else "Wann passt Ihnen ein kurzer Rückruf? Antworten Sie einfach auf diese E-Mail"
+    body = (f"{greet}\n\n"
+            "vielen Dank für Ihre Anfrage zu unserem humanoiden Roboter Unitree G1!\n\n"
+            "Damit wir Ihnen ein passendes Angebot machen können, besprechen wir die Details gern kurz am Telefon. "
+            f"{ask} — mit Ihrem Wunschtermin und, falls schon bekannt, Datum und Ort der Veranstaltung.\n\n"
+            "Mit freundlichen Grüßen\n"
+            "Oliwier Latek\n33bots\n" + mailer.config()["user"])
+    return subject, body
+
+
+def _add_comment(lead_id, text, source, when=None, user_id=None):
+    db.session.add(Comment(lead_id=lead_id, user_id=user_id, text=text, source=source,
+                           created_at=when or datetime.utcnow()))
+
+
+def send_customer_mail(lead, user_id=None):
+    if not lead.emails:
+        return "Lead hat keine E-Mail-Adresse"
+    subject, body = customer_mail(lead)
+    msg_id, err = mailer.send(lead.emails, subject, body)
+    if err:
+        return err
+    lead.mail_sent_at = datetime.utcnow()
+    if msg_id:
+        db.session.merge(MailSeen(message_id=msg_id[:320]))
+    _add_comment(lead.id, f"✉️ An {', '.join(lead.emails)} · Betreff: {subject}\n\n{body}", "mail_out", user_id=user_id)
+    db.session.commit()
+    return None
+
+
+def team_emails():
+    extra = [e.strip() for e in os.environ.get("NOTIFY_EMAILS", "").split(",") if e.strip()]
+    return list(dict.fromkeys([u.email for u in active_users() if u.email] + extra))
+
+
+def notify_team(subject, body):
+    if os.environ.get("NOTIFY", "1") == "0" or not mailer.configured():
+        return None
+    to = team_emails()
+    if not to:
+        return None
+    return mailer.send(to, subject, body)[1]
+
+
+def lead_url(lead):
+    base = public_base_url()
+    return f"{base}/lead/{lead.id}" if base else f"/lead/{lead.id}"
+
+
+def notify_new_lead(lead):
+    lines = [f"Firma: {lead.company}"]
+    for label, value in (("Ansprechpartner", lead.contact_name), ("Telefon", lead.contact_phone),
+                         ("E-Mail", ", ".join(lead.emails)), ("Ort", lead.location),
+                         ("Termin", lead.event_date.strftime("%d.%m.%Y") if lead.event_date else "")):
+        if value:
+            lines.append(f"{label}: {value}")
+    if lead.notes:
+        lines.append(f"\nAnfrage:\n{lead.notes[:1500]}")
+    err = notify_team(f"Neuer Lead: {lead.company}", "\n".join(lines) + f"\n\nIm CRM öffnen: {lead_url(lead)}")
+    if not err:
+        lead.notified_at = datetime.utcnow()
+
+
+def mail_tick():
+    """Ein Durchlauf: Benachrichtigung + Kunden-Mail für neue Leads, dann Postfach-Verlauf."""
+    if not mailer.configured():
+        return
+    since = get_setting(MAIL_SINCE_KEY)
+    if not since:  # erster Start: ab jetzt — ältere Leads bleiben unberührt
+        set_setting(MAIL_SINCE_KEY, datetime.utcnow().isoformat(timespec="seconds"))
+        db.session.commit()
+        return
+    since_dt = datetime.fromisoformat(since)
+    base_ok = bool(public_base_url())
+    for lead in Lead.query.filter(Lead.created_at >= since_dt).order_by(Lead.created_at).limit(50).all():
+        if base_ok and not lead.notified_at:
+            notify_new_lead(lead)
+            db.session.commit()
+        auto = os.environ.get("AUTO_MAIL", "1") != "0"
+        if auto and base_ok and not lead.mail_sent_at and lead.emails and lead.status == STATUS_OPEN:
+            tries = int(get_setting(f"mail_tries:{lead.id}") or 0)
+            if tries < 3 and send_customer_mail(lead):
+                db.session.rollback()
+                set_setting(f"mail_tries:{lead.id}", str(tries + 1))
+                db.session.commit()
+    sync_mailbox()
+
+
+def sync_mailbox():
+    """E-Mails mit Kunden (Eingang + Gesendet) als Kommentare an den passenden Lead hängen."""
+    last = get_setting(MAIL_SYNC_KEY)
+    start = (datetime.fromisoformat(last) - timedelta(days=2)) if last else datetime.utcnow() - timedelta(days=14)
+    by_addr = {}
+    for lead in Lead.query.all():
+        for e in lead.emails:
+            by_addr.setdefault(e.lower(), lead)
+    if not by_addr:
+        return 0
+    own = mailer.config()["user"].lower()
+    added = 0
+    for folder in ("INBOX", "SENT"):
+        try:
+            msgs = mailer.fetch(folder, start.date())
+        except Exception:
+            continue
+        for m in msgs:
+            if db.session.get(MailSeen, m["message_id"]):
+                continue
+            db.session.add(MailSeen(message_id=m["message_id"]))
+            text = mailer.strip_reply(m["text"])
+            if folder == "INBOX" and m["from"] in by_addr:
+                lead = by_addr[m["from"]]
+                _add_comment(lead.id, f"✉️ Von {m['from']} · Betreff: {m['subject']}\n\n{text}", "mail_in", m["date"])
+                notify_team(f"Antwort vom Kunden: {lead.company}",
+                            f"{m['from']} schreibt ({m['subject']}):\n\n{text[:1500]}\n\nIm CRM öffnen: {lead_url(lead)}")
+                added += 1
+            elif folder == "SENT" and m["from"] == own:
+                lead = next((by_addr[a] for a in m["to"] if a in by_addr), None)
+                if lead:
+                    _add_comment(lead.id, f"✉️ An {', '.join(m['to'])} · Betreff: {m['subject']}\n\n{text}",
+                                 "mail_out", m["date"])
+                    added += 1
+    set_setting(MAIL_SYNC_KEY, datetime.utcnow().isoformat(timespec="seconds"))
+    db.session.commit()
+    return added
+
+
+_MAIL_LOCK = threading.Lock()
+
+
+def _mail_scheduler():
+    time.sleep(30)
+    while True:
+        if _MAIL_LOCK.acquire(blocking=False):
+            try:
+                with app.app_context():
+                    mail_tick()
+                    db.session.remove()
+            except Exception:
+                pass
+            finally:
+                _MAIL_LOCK.release()
+        time.sleep(MAIL_POLL_SECONDS)
+
+
+@app.route("/lead/<int:lead_id>/kunden-mail", methods=["POST"])
+def lead_customer_mail(lead_id):
+    lead = db.session.get(Lead, lead_id) or abort(404)
+    me = current_user()
+    err = send_customer_mail(lead, user_id=me.id if me else None)
+    if err:
+        db.session.rollback()
+    flash(f"E-Mail nicht gesendet: {err}" if err else "E-Mail an den Kunden gesendet.")
+    return redirect(url_for("lead_detail", lead_id=lead.id))
+
+
+@app.route("/r/<token>", methods=["GET", "POST"])
+def callback_form(token):
+    """Öffentliches Formular für den Kunden: Wunschtermin für den Rückruf (+ optional Eventdaten)."""
+    lead = Lead.query.filter_by(form_token=token).first() if len(token) >= 16 else None
+    if not lead:
+        abort(404)
+    today = datetime.utcnow().date()
+    if request.method == "GET":
+        return render_template("callback_form.html", lead=lead, done=False, slots=CALLBACK_SLOTS, today=today)
+    f = request.form
+    day = parse_date(f.get("day"))
+    slot = f.get("slot") if f.get("slot") in CALLBACK_SLOTS else "egal"
+    phone = (f.get("phone") or "").strip()[:60]
+    event_day = parse_date(f.get("event_date"))
+    place = (f.get("place") or "").strip()[:200]
+    comment = (f.get("comment") or "").strip()[:800]
+    lead.callback_date = day if day and day >= today else today
+    lead.callback_slot = slot
+    if phone and phone != (lead.contact_phone or ""):
+        if lead.contact_phone:
+            comment = (comment + f"\nRückrufnummer: {phone}").strip()
+        else:
+            lead.contact_phone = phone
+    if event_day and not lead.event_date:
+        lead.event_date = event_day
+    if place and not lead.location:
+        lead.location = place
+    lead.form_filled_at = datetime.utcnow()
+    parts = [f"📞 Rückrufwunsch: {callback_label(lead)}", f"Telefon: {phone or lead.contact_phone or '—'}"]
+    if event_day:
+        parts.append(f"Veranstaltung: {event_day:%d.%m.%Y}")
+    if place:
+        parts.append(f"Ort: {place}")
+    if comment:
+        parts.append(f"Kommentar: {comment}")
+    text = "\n".join(parts)
+    _add_comment(lead.id, text, "system")
+    db.session.commit()
+    lead_id = lead.id
+
+    def _notify():
+        with app.app_context():
+            l = db.session.get(Lead, lead_id)
+            notify_team(f"Rückrufwunsch: {l.company} – {callback_label(l)}", f"{text}\n\nIm CRM öffnen: {lead_url(l)}")
+            db.session.remove()
+    threading.Thread(target=_notify, daemon=True).start()
+    return render_template("callback_form.html", lead=lead, done=True, slots=CALLBACK_SLOTS, today=today)
+
+
+app.jinja_env.globals.update(callback_label=callback_label, mail_ready=mailer.configured)
+
 @app.route("/health")
 def health():
     db.session.execute(db.text("SELECT 1"))
@@ -696,7 +962,12 @@ def health():
 
 def ensure_columns():
     """Neue Spalten in bestehenden Datenbanken nachziehen (create_all legt nur neue Tabellen an)."""
-    wanted = {"leads": {"contact_email2": "VARCHAR(200)", "price_eur": "FLOAT", "price_note": "TEXT"}}
+    wanted = {
+        "leads": {"contact_email2": "VARCHAR(200)", "price_eur": "FLOAT", "price_note": "TEXT",
+                  "mail_sent_at": "TIMESTAMP", "notified_at": "TIMESTAMP", "form_token": "VARCHAR(40)",
+                  "form_filled_at": "TIMESTAMP", "callback_date": "DATE", "callback_slot": "VARCHAR(40)"},
+        "comments": {"source": "VARCHAR(20)"},
+    }
     insp = db.inspect(db.engine)
     with db.engine.begin() as conn:
         for table, cols in wanted.items():
@@ -712,6 +983,9 @@ with app.app_context():
 
 if clickup_configured() and os.environ.get("CLICKUP_AUTOSYNC", "1") != "0":
     threading.Thread(target=_clickup_scheduler, daemon=True).start()
+
+if mailer.configured() and os.environ.get("MAIL_AUTOSYNC", "1") != "0":
+    threading.Thread(target=_mail_scheduler, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=os.environ.get("FLASK_DEBUG") == "1")
