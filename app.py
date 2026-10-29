@@ -600,7 +600,6 @@ def _calc_params(src):
     hours = src.get("h", type=int) or 8
     if hours not in pricing.HOUR_FACTORS:
         hours = 8
-    dep = src.get("z") if src.get("z") in pricing.DEPARTURES else "WAW"
     km_raw = (src.get("km") or "").replace(",", ".").strip()
     try:
         km = max(0.0, min(float(km_raw), 3000.0)) if km_raw else None
@@ -608,17 +607,19 @@ def _calc_params(src):
         km = None
     start = pricing.parse_start(src.get("od"))
     days = max(1, min(src.get("dni", type=int) or 1, pricing.MAX_DAYS))
-    return hours, dep, km, start, days
+    return hours, km, start, days
 
 
 def calc_quotes(place, hours, km, start, days):
-    """{'dest', 'estimated', 'unknown', 'options': {WAW/KTW: {label, crossing, de_km, quote}}}"""
+    """{'dest', 'estimated', 'unknown', 'best', 'options': {WAW/KTW: {crossing, de_km, quote}}}.
+    'best' = günstigster Preis für den Kunden (Abfahrt Warschau oder Kattowitz — wird nicht angezeigt)."""
     night = pricing.night_hours(start, hours)
     out = {"dest": None, "estimated": False, "unknown": False, "options": {}}
     if km is not None:
         for code in pricing.DEPARTURES:
             out["options"][code] = {"label": pricing.DEPARTURES[code], "crossing": None, "de_km": km,
                                     "quote": pricing.quote(hours, km, night, days)}
+        out["best"] = out["options"]["WAW"]
         return out
     dest = geocode(place)
     if not dest:
@@ -629,13 +630,14 @@ def calc_quotes(place, hours, km, start, days):
     for code, plan in plans.items():
         out["options"][code] = {"label": plan["origin"], "crossing": plan["crossing"], "de_km": plan["de_km"],
                                 "quote": pricing.quote(hours, plan["de_km"], night, days)}
+    out["best"] = min(out["options"].values(), key=lambda o: (o["quote"]["rounded"], o["de_km"]))
     return out
 
 
 @app.route("/kalkulator")
 def calculator():
     lead = db.session.get(Lead, request.args.get("lead", type=int) or 0)
-    hours, dep, km, start, days = _calc_params(request.args)
+    hours, km, start, days = _calc_params(request.args)
     place = (request.args.get("ort") or "").strip()[:200]
     if lead and not place and "ort" not in request.args:
         place = lead.location or ""
@@ -649,14 +651,13 @@ def calculator():
         except requests.exceptions.RequestException as e:
             error = f"Kartendienst nicht erreichbar ({type(e).__name__}) — km ab Grenze bitte manuell eintragen."
     return render_template(
-        "calculator.html", lead=lead, place=place, hours=hours, dep=dep, km=km, start=start, days=days,
+        "calculator.html", lead=lead, place=place, hours=hours, km=km, start=start, days=days,
         start_text=pricing.fmt_hour(start) if start is not None else "",
         end_text=pricing.fmt_hour(start + hours) if start is not None else "",
         night=pricing.night_hours(start, hours), result=result, error=error,
         hour_options=sorted(pricing.HOUR_FACTORS, reverse=True),
         day_options=[(d, pricing.days_label(d), pricing.day_discount(d)) for d in range(1, pricing.MAX_DAYS + 1)],
-        departures=pricing.DEPARTURES, departures_from=pricing.DEPARTURES_FROM, night_from=pricing.NIGHT_FROM,
-        crossings=CROSSINGS,
+        night_from=pricing.NIGHT_FROM, crossings=CROSSINGS,
     )
 
 
@@ -664,19 +665,19 @@ def calculator():
 def calculator_save():
     """Speichert den Angebotspreis im Lead und eine Kurzfassung (ohne Sätze) als Kommentar."""
     lead = db.session.get(Lead, request.form.get("lead", type=int) or 0) or abort(404)
-    hours, dep, km, start, days = _calc_params(request.form)
+    hours, km, start, days = _calc_params(request.form)
     place = (request.form.get("ort") or "").strip()[:200]
     try:
         res = calc_quotes(place, hours, km, start, days)
     except requests.exceptions.RequestException:
         res = {"options": {}}
-    opt = res["options"].get(dep)
+    opt = res.get("best")
     if not opt:
         flash("Preis konnte nicht berechnet werden — bitte erneut versuchen.")
-        return redirect(url_for("calculator", lead=lead.id, ort=place, h=hours, z=dep, dni=days))
+        return redirect(url_for("calculator", lead=lead.id, ort=place, h=hours, dni=days))
     q = opt["quote"]
-    via = f" über {opt['crossing']}" if opt["crossing"] else ""
-    route = f"{opt['label']}{via} → {place or 'Ort'}, {q['km']} km ab Grenze"
+    via = f"Grenze {opt['crossing']} → " if opt["crossing"] else ""
+    route = f"{via}{place or 'Ort'}, {q['km']} km ab Grenze"
     lead.price_eur = float(q["rounded"])
     lead.price_note = pricing.summary(q, route)
     me = current_user()

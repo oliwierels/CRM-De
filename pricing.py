@@ -7,7 +7,15 @@ Regeln (wie im polnischen 33bots-CRM, in Euro):
 - die Anfahrt darf höchstens 30 % des Preises sein — sonst steigt der Preis so weit,
   dass sie genau 30 % ausmacht,
 - mehrere Tage: 2 Tage −10 %, ab 3 Tagen −15 % auf alles; das Team bleibt vor Ort
-  (eine Anfahrt für den ganzen Einsatz, optional Übernachtung pro Nacht).
+  (eine Anfahrt für den ganzen Einsatz),
+- Übernachtung immer: eine Nacht pro Einsatztag,
+- Abfahrt Warschau oder Kattowitz: gerechnet wird beides, genommen der günstigere Preis
+  (die Abfahrt wird im CRM nicht gezeigt).
+
+Angebotsposten (lines): Roboter-Miete, Nachtzuschlag, Anfahrt, Übernachtung, Rabatt — in runden
+Beträgen (auf 10 €), Summe = Angebotspreis. Die Anfahrt mit Übernachtung ist nie mehr als 30 % —
+was der Preis darüber hinaus steigt, steckt in der Miete, damit die Posten „menschlich“ aussehen
+(Miete ist immer der größte Posten).
 
 Die Sätze sind nicht im CRM sichtbar: Standardwerte hier, Änderungen über Railway-Variablen
 (CALC_DAY_PRICE, CALC_KM_PRICE, CALC_LODGING, CALC_ROUND_TO).
@@ -39,7 +47,7 @@ def rates():
     return {
         "day_price": _env_float("CALC_DAY_PRICE", 2500.0),
         "km_price": _env_float("CALC_KM_PRICE", 1.0),
-        "lodging": _env_float("CALC_LODGING", 0.0),
+        "lodging": _env_float("CALC_LODGING", 150.0),
         "round_to": _env_float("CALC_ROUND_TO", 100.0),
     }
 
@@ -103,11 +111,43 @@ def quote(hours, de_km_one_way, night=0.0, days=1, r=None):
     discount = round(subtotal * pct)
     total = subtotal - discount
     step = r["round_to"] if r["round_to"] > 0 else 1
-    return {
+    q = {
         "hours": hours, "days": days, "km": km, "night": night, "night_extra": night_extra,
-        "discount_pct": pct, "discount": discount, "raise_by": raise_by, "total": total,
+        "travel": travel, "lodging": lodging, "nights": days, "lodging_rate": r["lodging"],
+        "discount_pct": pct, "discount": discount, "raise_by": raise_by, "subtotal": subtotal, "total": total,
         "rounded": int(math.ceil(total / step) * step), "per_day": total / days,
     }
+    q["lines"] = offer_lines(q)
+    return q
+
+
+def _r10(value):
+    return int(round(value / 10.0)) * 10
+
+
+def offer_lines(q):
+    """Posten fürs Angebot in runden Beträgen; Summe = q['rounded']. Die Miete (auf 50 €) enthält eine
+    eventuelle Preiserhöhung durch das Anfahrt-Limit; die Rundung auf den Angebotspreis landet in der
+    Anfahrt (wenige Euro), damit die Miete ein glatter Betrag bleibt."""
+    days, hours = q["days"], q["hours"]
+    base_rental = q["subtotal"] - q["travel"] - q["lodging"] - q["night_extra"] * days
+    rental = int(round(base_rental / 50.0)) * 50
+    nightly = _r10(q["lodging_rate"])
+    lodging = nightly * q["nights"]
+    night = _r10(q["night_extra"] * days)
+    discount = _r10(q["discount"])
+    travel = q["rounded"] + discount - rental - lodging - night
+    if travel < 0:  # theoretisch bei km = 0 und Rundung nach unten — dann trägt die Miete den Rest
+        rental, travel = rental + travel, 0
+    lines = [(f"Roboter-Miete ({days_label(days)} × {hours} h, inkl. Betreuung vor Ort)", rental)]
+    if night:
+        lines.append((f"Nachtzuschlag ({q['night']:g} h nach {NIGHT_FROM}:00{' pro Tag' if days > 1 else ''})".replace(".", ","), night))
+    lines.append((f"Anfahrt und Rückfahrt ({q['km']} km ab Grenze)", travel))
+    if lodging:
+        lines.append((f"Übernachtung Team ({q['nights']} {'Nacht' if q['nights'] == 1 else 'Nächte'})", lodging))
+    if discount:
+        lines.append((f"Mehrtagesrabatt −{q['discount_pct'] * 100:.0f} %", -discount))
+    return lines
 
 
 def fmt_eur(value):
@@ -119,12 +159,7 @@ def days_label(n):
 
 
 def summary(q, route=""):
-    """Kurzfassung ohne Sätze (für Kommentar und Lead) — Preis, Einsatz, Strecke."""
-    parts = [f"{days_label(q['days'])} × {q['hours']} h vor Ort"]
-    if q["night"]:
-        parts.append(f"davon {q['night']:g} h nach {NIGHT_FROM}:00".replace(".", ","))
-    if route:
-        parts.append(route)
-    if q["discount"]:
-        parts.append(f"inkl. {q['discount_pct'] * 100:.0f} % Mehrtagesrabatt")
-    return ", ".join(parts) + f" → {fmt_eur(q['rounded'])} netto inkl. Anfahrt"
+    """Angebotsposten als Text (für Lead und Kommentar)."""
+    head = f"{route}\n" if route else ""
+    body = "\n".join(f"{label}: {fmt_eur(amount) if amount >= 0 else '−' + fmt_eur(-amount)}" for label, amount in q["lines"])
+    return f"{head}{body}\nGesamt netto: {fmt_eur(q['rounded'])}"

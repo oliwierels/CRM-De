@@ -22,7 +22,7 @@
 </style>
 {% endblock %}
 {% block content %}
-{% set opt = result.options.get(dep) if result else none %}
+{% set opt = result.best if result else none %}
 <div class="kc-grid">
   <form method="get" class="panel" id="kcForm">
     <div class="panel-header"><i class="bi bi-calculator"></i> Angaben</div>
@@ -55,22 +55,14 @@
         {% if start is not none %}<div class="kc-sub" style="margin-top:4px">{{ start_text }}–{{ end_text }}{% if night %} · {{ '%g'|format(night) }} h nach {{ night_from }}:00{% else %} · ohne Nachtstunden{% endif %}</div>{% endif %}
       </div>
       <div>
-        <label>Abfahrt</label>
-        <div class="kc-seg">
-          {% for key, name in departures.items() %}
-          <label class="{{ 'on' if key == dep }}"><input type="radio" name="z" value="{{ key }}" {{ 'checked' if key == dep }} onchange="this.form.submit()">{{ name }}</label>
-          {% endfor %}
-        </div>
-      </div>
-      <div>
         <label>km ab Grenze, einfache Strecke <span style="color:var(--muted)">(leer = aus der Karte)</span></label>
         <input type="number" name="km" value="{{ km|round|int if km is not none else '' }}" min="0" max="3000" step="1"
                placeholder="{{ opt.de_km|round|int if opt else 'automatisch' }}">
       </div>
       <button class="btn btn-primary btn-sm">Berechnen</button>
       <div class="kc-rules">
-        Anfahrt zählt nur in Deutschland: ab Grenzübergang bis zum Ort und zurück. Der Übergang wird automatisch gewählt
-        (kürzeste Gesamtstrecke ab {{ departures.values()|join(' bzw. ') }}). Mehrere Tage: 2 Tage −10 %, ab 3 Tagen −15 %,
+        Anfahrt zählt nur in Deutschland: ab Grenzübergang bis zum Ort und zurück; der günstigste Weg wird
+        automatisch gewählt. Übernachtung des Teams ist immer dabei. Mehrere Tage: 2 Tage −10 %, ab 3 Tagen −15 %,
         das Team bleibt vor Ort. Stunden nach {{ night_from }}:00 mit Nachtzuschlag. Strecken aus OpenStreetMap — eigene km
         eintragen, wenn die Route bekannt ist.
       </div>
@@ -86,32 +78,29 @@
         <div class="kc-sub">Veranstaltungsort eingeben (oder km ab Grenze) und „Berechnen“ klicken.</div>
       {% elif opt %}
         {% set q = opt.quote %}
-        <div class="kc-sub">{{ opt.label }}{% if opt.crossing %} → {{ opt.crossing }}{% endif %} → {{ place or 'Ort' }} · {{ q.hours }} h vor Ort{% if start is not none %} ({{ start_text }}–{{ end_text }}){% endif %}{% if q.days > 1 %} · <b style="color:var(--text)">{{ q.days }} Tage</b>{% endif %}</div>
-        <div class="kc-total" style="margin-top:4px">{{ q.rounded|eur }} <span style="font-size:14px;font-weight:600;color:var(--muted)">netto inkl. Anfahrt</span></div>
+        <div class="kc-sub">{% if opt.crossing %}Grenze {{ opt.crossing }} → {% endif %}{{ place or 'Ort' }} · {{ q.km }} km ab Grenze · {{ q.hours }} h vor Ort{% if start is not none %} ({{ start_text }}–{{ end_text }}){% endif %}{% if q.days > 1 %} · <b style="color:var(--text)">{{ q.days }} Tage</b>{% endif %}</div>
+        <div class="kc-total" style="margin-top:4px">{{ q.rounded|eur }} <span style="font-size:14px;font-weight:600;color:var(--muted)">netto</span></div>
         {% if q.days > 1 %}<div class="kc-sub">= {{ (q.rounded / q.days)|eur }} pro Tag</div>{% endif %}
+        <div style="margin-top:12px">
+          <div class="kc-sub" style="text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:2px">Angebotsposten</div>
+          {% for label, amount in q.lines %}
+          <div class="kc-row"><span>{{ label }}</span><span style="{{ 'color:var(--green)' if amount < 0 }}">{{ '−' ~ ((-amount)|eur) if amount < 0 else amount|eur }}</span></div>
+          {% endfor %}
+          <div class="kc-row"><span><b style="color:var(--text)">Gesamt netto</b></span><span><b>{{ q.rounded|eur }}</b></span></div>
+        </div>
+        {% set offer_text %}Roboter-Einsatz{{ ' in ' ~ place if place }}:
+{% for label, amount in q.lines %}{{ label }}: {{ '−' ~ ((-amount)|eur) if amount < 0 else amount|eur }}
+{% endfor %}Gesamt: {{ q.rounded|eur }} netto{% endset %}
         <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px"
                 onclick="navigator.clipboard.writeText(this.dataset.t);this.textContent='Kopiert ✓'"
-                data-t="{{ q.days }} Tag{{ 'e' if q.days > 1 }} Roboter-Einsatz ({{ q.hours }} h{{ ' pro Tag' if q.days > 1 }}){{ ' in ' ~ place if place }}: {{ q.rounded|eur }} netto inkl. Anfahrt">Angebotstext kopieren</button>
-        <div style="margin-top:12px">
-          <div class="kc-row"><span>Einsatz</span><span>{{ q.days }} × {{ q.hours }} h</span></div>
-          {% if q.night %}<div class="kc-row"><span>Nachtstunden (nach {{ night_from }}:00)</span><span>{{ '%g'|format(q.night) }} h{{ ' / Tag' if q.days > 1 }}, inklusive</span></div>{% endif %}
-          <div class="kc-row"><span>Anfahrt ab Grenze</span><span>{{ q.km }} km einfach, hin und zurück inklusive</span></div>
-          {% if q.discount %}<div class="kc-row"><span>Mehrtagesrabatt</span><span style="color:var(--green)">−{{ (q.discount_pct * 100)|round|int }} %, inklusive</span></div>{% endif %}
-        </div>
+                data-t="{{ offer_text }}">Angebotsposten kopieren</button>
         {% if result.estimated %}<div class="kc-warn">Routenplaner nicht erreichbar — Strecke geschätzt (Luftlinie × 1,25).</div>{% endif %}
-
-        {% for key, other in result.options.items() if key != dep %}
-        <div class="kc-alt">Zum Vergleich {{ departures_from[key] }}{% if other.crossing %} über {{ other.crossing }}{% endif %}: {{ other.de_km|round|int }} km ab Grenze →
-          <b style="color:var(--text)">{{ other.quote.rounded|eur }}</b> ·
-          <a href="{{ url_for('calculator', lead=lead.id if lead else none, ort=place, h=hours, z=key, km=km|round|int if km is not none else none, od=start_text or none, dni=days) }}">{{ departures_from[key] }} rechnen</a></div>
-        {% endfor %}
 
         {% if lead %}
         <form method="post" action="{{ url_for('calculator_save') }}" style="margin-top:14px">
           <input type="hidden" name="lead" value="{{ lead.id }}">
           <input type="hidden" name="ort" value="{{ place }}">
           <input type="hidden" name="h" value="{{ hours }}">
-          <input type="hidden" name="z" value="{{ dep }}">
           {% if km is not none %}<input type="hidden" name="km" value="{{ km }}">{% endif %}
           {% if start is not none %}<input type="hidden" name="od" value="{{ start_text }}">{% endif %}
           <input type="hidden" name="dni" value="{{ days }}">

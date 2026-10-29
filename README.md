@@ -13,17 +13,23 @@ Prosty CRM do obsługi niemieckich leadów (zespół Posevo). Interfejs po niemi
 ## Kalkulator
 
 Pola jak w polskim kalkulatorze: miejsce, czas na miejscu (8 / 4 / 2 h), liczba dni, godzina rozpoczęcia,
-wyjazd z Warszawy albo Katowic, opcjonalnie km od granicy wpisane ręcznie. Wynik: jedna cena
-„netto inkl. Anfahrt” (zaokrąglona w górę), porównanie z drugim miejscem wyjazdu, zapis w leadzie.
+opcjonalnie km od granicy wpisane ręcznie. Miejsca wyjazdu nie widać: kalkulator liczy z Warszawy
+i z Katowic i bierze tańszą cenę dla klienta.
+
+Wynik: cena netto + **pozycje do oferty** (Roboter-Miete, Nachtzuschlag, Anfahrt und Rückfahrt,
+Übernachtung Team, Mehrtagesrabatt) w okrągłych kwotach, które sumują się do ceny. Przycisk kopiuje
+pozycje, „Im Lead speichern” zapisuje cenę i pozycje w leadzie.
 
 Zasady (`pricing.py`):
 - 8 h = stawka dzienna, 4 h = 6/8, 2 h = 4/8 tej stawki,
 - każda godzina po 22:00 (do 6:00) × 1,5 stawki godzinowej pakietu,
 - dojazd liczy się tylko w Niemczech: km od przejścia granicznego do miejsca × 2 × stawka za km;
-  przejście (Frankfurt (Oder), Görlitz, Forst, Pomellen, Waidhaus przez Czechy) wybierane automatycznie
-  po najkrótszej całej trasie z Warszawy / Katowic,
-- dojazd (z noclegami) najwyżej 30% ceny — inaczej cena rośnie do tego progu,
-- kilka dni: 2 dni −10%, od 3 dni −15%; ekipa zostaje na miejscu (jeden dojazd, opcjonalnie nocleg za każdy dzień).
+  przejście (Frankfurt (Oder), Görlitz, Forst, Pomellen, Waidhaus przez Czechy) wybierane automatycznie,
+- nocleg ekipy zawsze: jedna noc na każdy dzień,
+- dojazd z noclegami najwyżej 30% ceny — jeśli więcej, cena rośnie, a podwyżka trafia do pozycji
+  „Roboter-Miete” (wynajem zawsze jest największą pozycją, dojazd nie wygląda absurdalnie),
+- kilka dni: 2 dni −10%, od 3 dni −15%; ekipa zostaje na miejscu (jeden dojazd),
+- pozycje zaokrąglone: wynajem do 50 €, reszta do 10 €; różnica z zaokrąglenia ceny ląduje w dojeździe.
 
 Stawek nie widać w CRM — ustawia się je zmiennymi w Railway (niżej). Kilometry: OpenStreetMap
 (Nominatim + OSRM); gdy serwis nie odpowiada — szacunek (linia prosta × 1,25).
@@ -43,7 +49,7 @@ Stawek nie widać w CRM — ustawia się je zmiennymi w Railway (niżej). Kilome
 | `CLICKUP_POLL_SECONDS` | opcjonalnie, co ile sekund sprawdzać ClickUp (domyślnie 300) |
 | `CALC_DAY_PRICE` | opcjonalnie, stawka za dzień 8 h w € netto (domyślnie 2500) |
 | `CALC_KM_PRICE` | opcjonalnie, € za km od granicy (domyślnie 1.0) |
-| `CALC_LODGING` | opcjonalnie, € za nocleg ekipy za każdy dzień (domyślnie 0 = bez noclegu) |
+| `CALC_LODGING` | opcjonalnie, € za nocleg ekipy za noc (domyślnie 150) |
 | `CALC_ROUND_TO` | opcjonalnie, zaokrąglenie ceny w górę do (domyślnie 100) |
 
 Tabele i nowe kolumny tworzą się same przy starcie.
