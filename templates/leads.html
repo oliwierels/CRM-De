@@ -46,6 +46,7 @@
         <td>
           <a href="{{ url_for('lead_detail', lead_id=l.id) }}" style="font-weight:600">{{ l.company }}</a>
           <div class="small muted">{{ l.contact_name or '' }}{% if l.contact_phone %} · {{ l.contact_phone }}{% endif %}{% if l.location %} · {{ l.location }}{% endif %}</div>
+          {% if l.callback_date and l.status == STATUS_OPEN %}<div class="small" style="color:var(--yellow);font-weight:600">📞 Rückruf: {{ callback_label(l) }}</div>{% endif %}
         </td>
         <td class="small hide-sm">{{ l.event_date|d }}</td>
         <td class="small hide-sm" style="color:var(--green);font-weight:600">{{ l.price_eur|eur if l.price_eur }}</td>

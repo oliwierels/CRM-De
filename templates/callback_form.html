@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>33bots – Rückruf vereinbaren</title>
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+<style>
+:root { --bg: #f5f6fa; --card: #fff; --text: #1d2130; --muted: #6b7080; --line: #e2e5ee; --accent: #5b5ef4; --green: #16a34a; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111318; --card: #1c1e26; --text: #dde1f0; --muted: #8a8fa0; --line: #2a2d38; --accent: #6d70ff; --green: #22c55e; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.wrap { max-width: 520px; margin: 0 auto; padding: 32px 16px 48px; }
+.brand { font-weight: 800; font-size: 20px; margin-bottom: 18px; display: flex; align-items: center; gap: 10px; }
+.brand img { width: 30px; height: 30px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+h1 { font-size: 20px; margin: 0 0 6px; }
+p.sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 5px; }
+input, textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.slots label { margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; color: var(--text); font-weight: 600; cursor: pointer; }
+.slots input { display: none; }
+.slots label:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+details { margin-top: 16px; }
+details summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+button { margin-top: 20px; width: 100%; background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px; font: inherit; font-weight: 700; cursor: pointer; }
+.ok { text-align: center; padding: 18px 6px; }
+.ok .tick { font-size: 44px; color: var(--green); line-height: 1; }
+.foot { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><img src="{{ url_for('static', filename='favicon.svg') }}" alt=""> 33bots</div>
+  <div class="card">
+  {% if done %}
+    <div class="ok">
+      <div class="tick">✓</div>
+      <h1>Danke! Wir rufen Sie an.</h1>
+      <p class="sub" style="margin:0">Termin: {{ callback_label(lead) }}</p>
+    </div>
+  {% else %}
+    <h1>Wann dürfen wir Sie anrufen?</h1>
+    <p class="sub">Wählen Sie einen Termin — wir besprechen kurz die Details Ihrer Veranstaltung mit dem Roboter Unitree G1.</p>
+    <form method="post">
+      <label for="day">Tag</label>
+      <input type="date" id="day" name="day" min="{{ today.isoformat() }}" value="{{ today.isoformat() }}" required>
+      <label>Uhrzeit</label>
+      <div class="slots">
+        {% for key, label in slots.items() %}
+        <label><input type="radio" name="slot" value="{{ key }}" {{ 'checked' if loop.first }}>{{ label }}</label>
+        {% endfor %}
+      </div>
+      <label for="phone">Telefonnummer</label>
+      <input type="tel" id="phone" name="phone" value="{{ lead.contact_phone or '' }}" placeholder="+49 …" required maxlength="60">
+      <details>
+        <summary>Details zur Veranstaltung (optional)</summary>
+        <label for="event_date">Datum der Veranstaltung</label>
+        <input type="date" id="event_date" name="event_date">
+        <label for="place">Ort (Stadt)</label>
+        <input type="text" id="place" name="place" value="{{ lead.location or '' }}" maxlength="200">
+        <label for="comment">Was soll der Roboter machen?</label>
+        <textarea id="comment" name="comment" rows="3" maxlength="800"></textarea>
+      </details>
+      <button type="submit">Rückruf vereinbaren</button>
+    </form>
+  {% endif %}
+  </div>
+  <div class="foot">33bots · Humanoide Roboter für Events</div>
+</div>
+</body>
+</html>
