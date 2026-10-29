@@ -1,4 +1,4 @@
-"""Posevo CRM — schlankes CRM für deutsche Leads aus ClickUp.
+"""33bots DE CRM — schlankes CRM für deutsche Leads aus ClickUp.
 
 Leads kommen automatisch aus einer ClickUp-Liste, das Team bearbeitet sie hier:
 Status (unterschrieben / nicht unterschrieben), Zuständigkeit, Kontaktdaten, Kommentare.
@@ -15,9 +15,11 @@ import requests
 from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template, request, url_for
 from flask_sqlalchemy import SQLAlchemy
 
+import pricing
+
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "posevo-dev")
-_db_url = os.environ.get("DATABASE_URL", "sqlite:///posevo.db")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "crm-de-dev")
+_db_url = os.environ.get("DATABASE_URL", "sqlite:///crm-de.db")
 if _db_url.startswith("postgres://"):  # Railway/Heroku liefern das alte Schema
     _db_url = _db_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
@@ -47,6 +49,7 @@ class Lead(db.Model):
     company = db.Column(db.String(200), nullable=False)
     contact_name = db.Column(db.String(200))
     contact_email = db.Column(db.String(200))
+    contact_email2 = db.Column(db.String(200))  # zweite E-Mail (z. B. Assistenz, Buchhaltung)
     contact_phone = db.Column(db.String(60))
     location = db.Column(db.String(200))
     event_date = db.Column(db.Date)
@@ -60,6 +63,17 @@ class Lead(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     assignee = db.relationship("User")
+
+    @property
+    def emails(self):
+        """Gültige Adressen (Haupt-, dann zweite E-Mail), ohne Doppelte."""
+        out = []
+        for e in (self.contact_email, self.contact_email2):
+            e = (e or "").strip()
+            if e and _EMAIL_RE.fullmatch(e) and e.lower() not in [x.lower() for x in out]:
+                out.append(e)
+        return out
+
     comments = db.relationship("Comment", backref="lead", cascade="all, delete-orphan",
                                order_by="Comment.created_at.desc()")
 
@@ -105,7 +119,7 @@ def set_setting(key, value):
 
 def current_user():
     """Ausgewählte Person aus dem Cookie (kein Login). None, solange niemand ausgewählt ist."""
-    uid = request.cookies.get("posevo_user", type=int)
+    uid = request.cookies.get("crm_user", type=int) or request.cookies.get("posevo_user", type=int)
     user = db.session.get(User, uid) if uid else None
     return user if user and user.active else None
 
@@ -136,8 +150,17 @@ def format_d(value):
 
 @app.context_processor
 def inject_globals():
+    open_count = Lead.query.filter(Lead.status == STATUS_OPEN).count() if request.endpoint != "health" else 0
     return {"me": current_user(), "team": active_users(), "STATUSES": STATUSES,
-            "STATUS_OPEN": STATUS_OPEN, "STATUS_SIGNED": STATUS_SIGNED}
+            "STATUS_OPEN": STATUS_OPEN, "STATUS_SIGNED": STATUS_SIGNED, "user_color": user_color,
+            "open_count": open_count}
+
+
+USER_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ec4899", "#3b82f6", "#ef4444", "#14b8a6", "#a855f7"]
+
+
+def user_color(user):
+    return USER_COLORS[(user.id - 1) % len(USER_COLORS)] if user else "#6b7080"
 
 
 # ---------- CLICKUP-IMPORT ----------
@@ -222,6 +245,10 @@ def task_to_fields(task):
             if value:
                 fields.setdefault("event_date", value)
                 continue
+        elif target == "contact_email" and "contact_email" in fields and "contact_email2" not in fields \
+                and str(value).strip().lower() != fields["contact_email"].lower():
+            fields["contact_email2"] = str(value)[:200]  # zweites E-Mail-Feld im Formular
+            continue
         elif target and target not in fields:
             fields[target] = str(value)[:200]
             continue
@@ -280,7 +307,7 @@ def sync_clickup():
             fields = task_to_fields(task)
             lead = Lead.query.filter_by(clickup_task_id=tid).first()
             if lead:
-                for f in ("contact_name", "contact_email", "contact_phone", "location", "event_date"):
+                for f in ("contact_name", "contact_email", "contact_email2", "contact_phone", "location", "event_date"):
                     if not getattr(lead, f) and fields.get(f):
                         setattr(lead, f, fields[f])
                 continue
@@ -290,6 +317,7 @@ def sync_clickup():
             break
         page += 1
     set_setting("clickup_last_sync", datetime.utcnow().isoformat(timespec="seconds"))
+    set_setting("clickup_last_error", "")
     db.session.commit()
     return {"ok": True, "new": new, "info": f"{new} neue Leads aus ClickUp importiert"}
 
@@ -338,7 +366,8 @@ def leads():
     if q:
         like = f"%{q}%"
         query = query.filter(db.or_(Lead.company.ilike(like), Lead.contact_name.ilike(like),
-                                    Lead.contact_email.ilike(like), Lead.contact_phone.ilike(like),
+                                    Lead.contact_email.ilike(like), Lead.contact_email2.ilike(like),
+                                    Lead.contact_phone.ilike(like),
                                     Lead.location.ilike(like), Lead.notes.ilike(like)))
     if who == "none":
         query = query.filter(Lead.assigned_to.is_(None))
@@ -375,7 +404,7 @@ def lead_new():
 
 
 def _apply_form(lead, form):
-    for f in ("company", "contact_name", "contact_email", "contact_phone", "location"):
+    for f in ("company", "contact_name", "contact_email", "contact_email2", "contact_phone", "location"):
         if f in form:
             value = form.get(f, "").strip()[:200]
             if f == "company" and not value:
@@ -458,10 +487,12 @@ def team_toggle(uid):
 @app.route("/ich/<int:uid>")
 def choose_user(uid):
     user = db.session.get(User, uid)
-    target = request.args.get("next") or request.referrer or url_for("leads")
+    target = request.args.get("next") or ""
+    if not target.startswith("/") or target.startswith("//"):  # nur Seiten dieses CRM
+        target = url_for("leads")
     resp = make_response(redirect(target))
     if user and user.active:
-        resp.set_cookie("posevo_user", str(user.id), max_age=60 * 60 * 24 * 365, samesite="Lax")
+        resp.set_cookie("crm_user", str(user.id), max_age=60 * 60 * 24 * 365, samesite="Lax")
     return resp
 
 
@@ -473,11 +504,11 @@ def clickup_sync():
 
 
 # ---------- KALKULATOR ----------
-# Preis = Tage × Tagespreis + Anfahrt. Die Anfahrt zählt nur auf deutscher Seite: von der Grenze
-# bis zum Veranstaltungsort und zurück. Wir starten in Warschau oder Kattowitz; der Kalkulator
-# rechnet für jeden Start den kürzesten Weg über einen der Grenzübergänge und nimmt daraus die
-# Kilometer ab Grenze. Strecken kommen von OSRM (OpenStreetMap), ohne Verbindung wird
-# geschätzt (Luftlinie × 1,25).
+# Wie im polnischen 33bots-CRM: Einsatzzeit (8/4/2 h), Tage, Startzeit (Nachtzuschlag), Abfahrt
+# Warschau oder Kattowitz. Preise und Regeln in pricing.py; die Sätze sieht man im CRM nicht.
+# Anfahrt zählt nur auf deutscher Seite: ab Grenzübergang bis zum Ort und zurück. Für jeden Start
+# wählt der Rechner den Übergang mit der kürzesten Gesamtstrecke. Strecken: OSRM (OpenStreetMap),
+# ohne Verbindung geschätzt (Luftlinie × 1,25).
 
 ORIGINS = {
     "WAW": ("Warschau", 52.2297, 21.0122),
@@ -485,25 +516,14 @@ ORIGINS = {
 }
 # Grenzübergänge nach Deutschland (Ortsmitte der deutschen Grenzstadt, auf wenige km genau)
 CROSSINGS = [
-    ("Frankfurt (Oder) / Świecko — A2/A12", 52.3420, 14.5506),
-    ("Görlitz / Jędrzychowice — A4", 51.1528, 14.9874),
-    ("Forst (Lausitz) / Olszyna — A18/A15", 51.7358, 14.6390),
-    ("Pomellen / Kołbaskowo — A6/A11", 53.3361, 14.3790),
-    ("Waidhaus / Rozvadov (über Tschechien) — A6", 49.6430, 12.4950),
+    ("Frankfurt (Oder) / Świecko", 52.3420, 14.5506),
+    ("Görlitz / Jędrzychowice", 51.1528, 14.9874),
+    ("Forst (Lausitz) / Olszyna", 51.7358, 14.6390),
+    ("Pomellen / Kołbaskowo", 53.3361, 14.3790),
+    ("Waidhaus / Rozvadov (über Tschechien)", 49.6430, 12.4950),
 ]
-CALC_DEFAULTS = {"day_price": 2500.0, "km_price": 1.0, "round_to": 50.0}
 ROAD_FACTOR = 1.25
-OSM_HEADERS = {"User-Agent": "Posevo-CRM/1.0 (Leadverwaltung, Entfernungsrechner)"}
-
-
-def calc_settings():
-    out = {}
-    for key, default in CALC_DEFAULTS.items():
-        try:
-            out[key] = float(get_setting(f"calc_{key}", default))
-        except (TypeError, ValueError):
-            out[key] = default
-    return out
+OSM_HEADERS = {"User-Agent": "33bots-DE-CRM/1.0 (Leadverwaltung, Entfernungsrechner)"}
 
 
 def _haversine_km(a, b):
@@ -571,87 +591,101 @@ def plan_routes(dest):
     return plans, estimated
 
 
-def compute_price(days, day_price, de_km_one_way, km_price, round_to, extra=0.0):
-    rental = days * day_price
-    travel = 2 * de_km_one_way * km_price
-    raw = rental + travel + extra
-    total = math.ceil(raw / round_to) * round_to if round_to > 0 else raw
-    return {"rental": rental, "travel": travel, "extra": extra, "raw": raw, "total": total,
-            "per_day": total / days if days else total}
-
-
 @app.template_filter("eur")
 def format_eur(value):
-    if value is None:
-        return ""
-    s = f"{value:,.0f}".replace(",", ".")
-    return f"{s} €"
+    return "" if value is None else pricing.fmt_eur(value)
 
 
-@app.route("/kalkulator", methods=["GET", "POST"])
+def _calc_params(src):
+    hours = src.get("h", type=int) or 8
+    if hours not in pricing.HOUR_FACTORS:
+        hours = 8
+    km_raw = (src.get("km") or "").replace(",", ".").strip()
+    try:
+        km = max(0.0, min(float(km_raw), 3000.0)) if km_raw else None
+    except ValueError:
+        km = None
+    start = pricing.parse_start(src.get("od"))
+    days = max(1, min(src.get("dni", type=int) or 1, pricing.MAX_DAYS))
+    return hours, km, start, days
+
+
+def calc_quotes(place, hours, km, start, days):
+    """{'dest', 'estimated', 'unknown', 'best', 'options': {WAW/KTW: {crossing, de_km, quote}}}.
+    'best' = günstigster Preis für den Kunden (Abfahrt Warschau oder Kattowitz — wird nicht angezeigt)."""
+    night = pricing.night_hours(start, hours)
+    out = {"dest": None, "estimated": False, "unknown": False, "options": {}}
+    if km is not None:
+        for code in pricing.DEPARTURES:
+            out["options"][code] = {"label": pricing.DEPARTURES[code], "crossing": None, "de_km": km,
+                                    "quote": pricing.quote(hours, km, night, days)}
+        out["best"] = out["options"]["WAW"]
+        return out
+    dest = geocode(place)
+    if not dest:
+        out["unknown"] = True
+        return out
+    plans, out["estimated"] = plan_routes(dest[:2])
+    out["dest"] = dest
+    for code, plan in plans.items():
+        out["options"][code] = {"label": plan["origin"], "crossing": plan["crossing"], "de_km": plan["de_km"],
+                                "quote": pricing.quote(hours, plan["de_km"], night, days)}
+    out["best"] = min(out["options"].values(), key=lambda o: (o["quote"]["rounded"], o["de_km"]))
+    return out
+
+
+@app.route("/kalkulator")
 def calculator():
-    cfg = calc_settings()
-    src = request.form if request.method == "POST" else request.args
-    lead = db.session.get(Lead, src.get("lead", type=int)) if src.get("lead", type=int) else None
-    form = {
-        "place": src.get("place", (lead.location if lead else "") or "").strip(),
-        "days": max(1, src.get("days", 1, type=int) or 1),
-        "day_price": src.get("day_price", cfg["day_price"], type=float),
-        "km_price": src.get("km_price", cfg["km_price"], type=float),
-        "extra": src.get("extra", 0.0, type=float) or 0.0,
-        "origin": src.get("origin", "auto"),
-        "manual_km": src.get("manual_km", type=float),
-    }
+    lead = db.session.get(Lead, request.args.get("lead", type=int) or 0)
+    hours, km, start, days = _calc_params(request.args)
+    place = (request.args.get("ort") or "").strip()[:200]
+    if lead and not place and "ort" not in request.args:
+        place = lead.location or ""
     result, error = None, None
-    if form["place"] or form["manual_km"]:
+    if place or km is not None:
         try:
-            dest = geocode(form["place"]) if form["place"] else None
-            if form["place"] and not dest and not form["manual_km"]:
-                error = f"Ort „{form['place']}“ nicht gefunden — bitte PLZ und Ort angeben oder km manuell eintragen."
-            else:
-                plans, estimated = plan_routes(dest[:2]) if dest else ({}, False)
-                if form["manual_km"]:
-                    chosen_code, de_km = "manual", form["manual_km"]
-                else:
-                    chosen_code = form["origin"] if form["origin"] in plans else \
-                        min(plans, key=lambda c: plans[c]["total_km"])
-                    de_km = plans[chosen_code]["de_km"]
-                price = compute_price(form["days"], form["day_price"], de_km, form["km_price"],
-                                      cfg["round_to"], form["extra"])
-                result = {"dest": dest, "plans": plans, "estimated": estimated, "chosen": chosen_code,
-                          "de_km": de_km, "price": price}
+            result = calc_quotes(place, hours, km, start, days)
+            if result["unknown"]:
+                error = f"Ort „{place}“ nicht gefunden — bitte PLZ und Ort angeben oder km ab Grenze eintragen."
+                result = None
         except requests.exceptions.RequestException as e:
             error = f"Kartendienst nicht erreichbar ({type(e).__name__}) — km ab Grenze bitte manuell eintragen."
-    if result and lead and request.method == "POST" and request.form.get("save") == "1":
-        p, plan = result["price"], result["plans"].get(result["chosen"])
-        route = (f"{plan['origin']} → {plan['crossing']} → {form['place']}" if plan
-                 else "km manuell eingetragen")
-        lead.price_eur = p["total"]
-        lead.price_note = (f"{form['days']} Tag(e) × {format_eur(form['day_price'])} = {format_eur(p['rental'])}\n"
-                           f"Anfahrt ab Grenze: 2 × {result['de_km']:.0f} km × {form['km_price']:.2f} € = {format_eur(p['travel'])}\n"
-                           + (f"Zuschlag: {format_eur(p['extra'])}\n" if p["extra"] else "")
-                           + f"Route: {route}\nAngebotspreis netto (gerundet): {format_eur(p['total'])}")
-        me = current_user()
-        db.session.add(Comment(lead_id=lead.id, user_id=me.id if me else None,
-                               text=f"Kalkulation gespeichert: {format_eur(p['total'])} netto inkl. Anfahrt\n{lead.price_note}"))
-        db.session.commit()
-        flash(f"Preis {format_eur(p['total'])} im Lead gespeichert.")
-        return redirect(url_for("lead_detail", lead_id=lead.id))
-    return render_template("calculator.html", form=form, result=result, error=error, lead=lead, cfg=cfg,
-                           ORIGINS=ORIGINS)
+    return render_template(
+        "calculator.html", lead=lead, place=place, hours=hours, km=km, start=start, days=days,
+        start_text=pricing.fmt_hour(start) if start is not None else "",
+        end_text=pricing.fmt_hour(start + hours) if start is not None else "",
+        night=pricing.night_hours(start, hours), result=result, error=error,
+        hour_options=sorted(pricing.HOUR_FACTORS, reverse=True),
+        day_options=[(d, pricing.days_label(d), pricing.day_discount(d)) for d in range(1, pricing.MAX_DAYS + 1)],
+        night_from=pricing.NIGHT_FROM, crossings=CROSSINGS,
+    )
 
 
-@app.route("/einstellungen", methods=["GET", "POST"])
-def settings():
-    if request.method == "POST":
-        for key in CALC_DEFAULTS:
-            value = request.form.get(key, type=float)
-            if value is not None and value >= 0:
-                set_setting(f"calc_{key}", str(value))
-        db.session.commit()
-        flash("Einstellungen gespeichert.")
-        return redirect(url_for("settings"))
-    return render_template("settings.html", cfg=calc_settings(), crossings=CROSSINGS, origins=ORIGINS)
+@app.route("/kalkulator/speichern", methods=["POST"])
+def calculator_save():
+    """Speichert den Angebotspreis im Lead und eine Kurzfassung (ohne Sätze) als Kommentar."""
+    lead = db.session.get(Lead, request.form.get("lead", type=int) or 0) or abort(404)
+    hours, km, start, days = _calc_params(request.form)
+    place = (request.form.get("ort") or "").strip()[:200]
+    try:
+        res = calc_quotes(place, hours, km, start, days)
+    except requests.exceptions.RequestException:
+        res = {"options": {}}
+    opt = res.get("best")
+    if not opt:
+        flash("Preis konnte nicht berechnet werden — bitte erneut versuchen.")
+        return redirect(url_for("calculator", lead=lead.id, ort=place, h=hours, dni=days))
+    q = opt["quote"]
+    via = f"Grenze {opt['crossing']} → " if opt["crossing"] else ""
+    route = f"{via}{place or 'Ort'}, {q['km']} km ab Grenze"
+    lead.price_eur = float(q["rounded"])
+    lead.price_note = pricing.summary(q, route)
+    me = current_user()
+    db.session.add(Comment(lead_id=lead.id, user_id=me.id if me else None,
+                           text=f"Kalkulation gespeichert: {lead.price_note}"))
+    db.session.commit()
+    flash(f"Preis {pricing.fmt_eur(q['rounded'])} im Lead gespeichert.")
+    return redirect(url_for("lead_detail", lead_id=lead.id))
 
 
 @app.route("/health")
@@ -660,8 +694,21 @@ def health():
     return jsonify({"ok": True})
 
 
+def ensure_columns():
+    """Neue Spalten in bestehenden Datenbanken nachziehen (create_all legt nur neue Tabellen an)."""
+    wanted = {"leads": {"contact_email2": "VARCHAR(200)", "price_eur": "FLOAT", "price_note": "TEXT"}}
+    insp = db.inspect(db.engine)
+    with db.engine.begin() as conn:
+        for table, cols in wanted.items():
+            have = {c["name"] for c in insp.get_columns(table)}
+            for col, typ in cols.items():
+                if col not in have:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
+
 with app.app_context():
     db.create_all()
+    ensure_columns()
 
 if clickup_configured() and os.environ.get("CLICKUP_AUTOSYNC", "1") != "0":
     threading.Thread(target=_clickup_scheduler, daemon=True).start()

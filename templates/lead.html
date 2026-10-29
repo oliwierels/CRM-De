@@ -1,79 +1,118 @@
 {% extends "base.html" %}
 {% block title %}{{ lead.company }}{% endblock %}
-{% block content %}
-<p class="small"><a href="{{ url_for('leads') }}">← Alle Leads</a></p>
-<div class="row" style="justify-content:space-between;margin-bottom:14px">
-  <h1 style="margin:0">{{ lead.company }}</h1>
-  <form method="post" action="{{ url_for('lead_status', lead_id=lead.id) }}" class="row">
-    <span class="pill {{ lead.status }}">{{ STATUSES[lead.status] }}</span>
+{% block page_title %}<a href="{{ url_for('leads') }}" class="muted" style="font-weight:400">Leads</a> <span class="muted">/</span> {{ lead.company }}{% endblock %}
+{% block topbar_actions %}
+  <span class="status-badge {{ lead.status }}">{{ STATUSES[lead.status] }}</span>
+  <form method="post" action="{{ url_for('lead_status', lead_id=lead.id) }}">
     {% if lead.status == STATUS_SIGNED %}
-      <button class="btn small" name="status" value="{{ STATUS_OPEN }}">Auf „nicht unterschrieben“ setzen</button>
+      <button class="btn btn-secondary btn-sm" name="status" value="{{ STATUS_OPEN }}">Auf „nicht unterschrieben“ setzen</button>
     {% else %}
-      <button class="btn ok" name="status" value="{{ STATUS_SIGNED }}">✓ Unterschrieben</button>
+      <button class="btn btn-success btn-sm" name="status" value="{{ STATUS_SIGNED }}"><i class="bi bi-check2"></i> Unterschrieben</button>
     {% endif %}
   </form>
-</div>
-
-<div class="card row" style="justify-content:space-between;margin-bottom:14px">
-  <div>
-    <div class="small muted">Angebotspreis netto, inkl. Anfahrt</div>
-    {% if lead.price_eur %}
-      <div style="font-size:22px;font-weight:700">{{ lead.price_eur|eur }}</div>
-      <details class="small"><summary class="muted" style="cursor:pointer">Kalkulation</summary><div style="white-space:pre-wrap;margin-top:6px">{{ lead.price_note }}</div></details>
-    {% else %}
-      <div class="muted">Noch nicht kalkuliert</div>
-    {% endif %}
-  </div>
-  <a class="btn" href="{{ url_for('calculator', lead=lead.id) }}">🧮 {{ 'Neu kalkulieren' if lead.price_eur else 'Preis kalkulieren' }}</a>
-</div>
-
-<div class="grid2" style="gap:14px;align-items:start">
-  <form class="card" method="post" action="{{ url_for('lead_edit', lead_id=lead.id) }}">
-    <h2>Daten</h2>
-    <label>Firma</label><input name="company" value="{{ lead.company }}" required>
-    <div class="grid2">
-      <div><label>Ansprechpartner</label><input name="contact_name" value="{{ lead.contact_name or '' }}"></div>
-      <div><label>Telefon</label><input name="contact_phone" value="{{ lead.contact_phone or '' }}"></div>
-      <div><label>E-Mail</label><input name="contact_email" type="email" value="{{ lead.contact_email or '' }}"></div>
-      <div><label>Ort</label><input name="location" value="{{ lead.location or '' }}"></div>
-      <div><label>Termin</label><input name="event_date" type="date" value="{{ lead.event_date.isoformat() if lead.event_date else '' }}"></div>
-      <div><label>Zuständig</label>
-        <select name="assigned_to">
-          <option value="">— niemand —</option>
-          {% for u in team %}<option value="{{ u.id }}" {{ 'selected' if lead.assigned_to == u.id }}>{{ u.name }}</option>{% endfor %}
-          {% if lead.assignee and not lead.assignee.active %}<option value="{{ lead.assignee.id }}" selected>{{ lead.assignee.name }} (inaktiv)</option>{% endif %}
-        </select>
+{% endblock %}
+{% block content %}
+<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start" class="lead-grid">
+  <div class="gap10" style="gap:14px">
+    <div class="panel">
+      <div class="panel-header"><i class="bi bi-cash-coin"></i> Angebotspreis</div>
+      <div class="panel-body row" style="justify-content:space-between;flex-wrap:wrap">
+        <div>
+          {% if lead.price_eur %}
+            <div style="font-size:24px;font-weight:800;color:var(--green);line-height:1.2">{{ lead.price_eur|eur }} <span class="small muted" style="font-weight:500">netto</span></div>
+            {% if lead.price_note %}<div class="small muted" style="margin-top:4px;white-space:pre-line">{{ lead.price_note }}</div>{% endif %}
+          {% else %}
+            <div class="muted">Noch nicht kalkuliert</div>
+          {% endif %}
+        </div>
+        <a class="btn btn-secondary btn-sm" href="{{ url_for('calculator', lead=lead.id) }}"><i class="bi bi-calculator"></i> {{ 'Neu kalkulieren' if lead.price_eur else 'Preis kalkulieren' }}</a>
       </div>
     </div>
-    <label>Anfrage / Notizen</label><textarea name="notes" rows="6">{{ lead.notes or '' }}</textarea>
-    <div class="row" style="margin-top:12px;justify-content:space-between">
-      <button class="btn primary">Speichern</button>
-      <span class="small muted">
-        {% if lead.clickup_task_id %}<a href="https://app.clickup.com/t/{{ lead.clickup_task_id }}" target="_blank" rel="noopener">In ClickUp öffnen ↗</a> · {% endif %}
-        Eingang {{ lead.created_at|dt }}{% if lead.signed_at %} · unterschrieben {{ lead.signed_at|d }}{% endif %}
-      </span>
-    </div>
-  </form>
 
-  <div class="card">
-    <h2>Kommentare</h2>
-    <form method="post" action="{{ url_for('lead_comment', lead_id=lead.id) }}">
-      <textarea name="text" rows="3" placeholder="{{ 'Kommentar als ' ~ me.name if me else 'Kommentar (oben auswählen, wer du bist)' }}" required></textarea>
-      <button class="btn primary" style="margin-top:8px">Hinzufügen</button>
+    <form class="panel" method="post" action="{{ url_for('lead_edit', lead_id=lead.id) }}">
+      <div class="panel-header"><i class="bi bi-person-vcard"></i> Daten</div>
+      <div class="panel-body gap10">
+        <div><label>Firma</label><input type="text" name="company" value="{{ lead.company }}" required></div>
+        <div class="grid2">
+          <div><label>Ansprechpartner</label><input type="text" name="contact_name" value="{{ lead.contact_name or '' }}"></div>
+          <div><label>Telefon</label><input type="text" name="contact_phone" value="{{ lead.contact_phone or '' }}"></div>
+          <div><label>E-Mail</label><input name="contact_email" type="email" value="{{ lead.contact_email or '' }}"></div>
+          <div><label>Zweite E-Mail (optional)</label><input name="contact_email2" type="email" value="{{ lead.contact_email2 or '' }}"></div>
+          <div><label>Ort</label><input type="text" name="location" value="{{ lead.location or '' }}"></div>
+          <div><label>Termin</label><input name="event_date" type="date" value="{{ lead.event_date.isoformat() if lead.event_date else '' }}"></div>
+          <div><label>Zuständig</label>
+            <select name="assigned_to">
+              <option value="">— niemand —</option>
+              {% for u in team %}<option value="{{ u.id }}" {{ 'selected' if lead.assigned_to == u.id }}>{{ u.name }}</option>{% endfor %}
+              {% if lead.assignee and not lead.assignee.active %}<option value="{{ lead.assignee.id }}" selected>{{ lead.assignee.name }} (inaktiv)</option>{% endif %}
+            </select>
+          </div>
+        </div>
+        <div><label>Anfrage / Notizen</label><textarea name="notes" rows="6">{{ lead.notes or '' }}</textarea></div>
+        <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+          <button class="btn btn-primary">Speichern</button>
+          <span class="small muted">
+            {% if lead.clickup_task_id %}<a href="https://app.clickup.com/t/{{ lead.clickup_task_id }}" target="_blank" rel="noopener" style="color:var(--accent)">In ClickUp öffnen ↗</a> · {% endif %}
+            Eingang {{ lead.created_at|dt }}{% if lead.signed_at %} · unterschrieben {{ lead.signed_at|d }}{% endif %}
+          </span>
+        </div>
+      </div>
     </form>
-    {% for c in lead.comments %}
-      <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:12px">
-        <div class="small muted">{{ c.author.name if c.author else 'Unbekannt' }} · {{ c.created_at|dt }}</div>
-        <div style="white-space:pre-wrap">{{ c.text }}</div>
+  </div>
+
+  <div class="gap10" style="gap:14px">
+    {% if lead.emails %}
+    <div class="panel">
+      <div class="panel-header"><i class="bi bi-envelope"></i> E-Mail schreiben</div>
+      <div class="panel-body">
+        <div id="mailto-pick">
+          {% for e in lead.emails %}
+          <label class="row" style="gap:6px;margin:4px 0;color:var(--text);font-size:13px;cursor:pointer">
+            <input type="checkbox" value="{{ e }}" checked onchange="updateMailto()"> {{ e }}
+          </label>
+          {% endfor %}
+        </div>
+        <a id="mailto-btn" class="btn btn-primary btn-sm" style="margin-top:8px" href="mailto:{{ lead.emails|join(',') }}"><i class="bi bi-send"></i> E-Mail schreiben{{ ' an beide' if lead.emails|length > 1 }}</a>
+        <div class="small muted" style="margin-top:6px">Öffnet das E-Mail-Programm mit den ausgewählten Empfängern.</div>
       </div>
-    {% else %}
-      <p class="muted small">Noch keine Kommentare.</p>
-    {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="panel">
+      <div class="panel-header"><i class="bi bi-chat-left-text"></i> Kommentare ({{ lead.comments|length }})</div>
+      <div class="panel-body">
+        <form method="post" action="{{ url_for('lead_comment', lead_id=lead.id) }}" class="row" style="align-items:flex-start">
+          <textarea name="text" rows="2" placeholder="{{ 'Kommentar als ' ~ me.name if me else 'Kommentar (links auswählen, wer du bist)' }}" required></textarea>
+          <button class="btn btn-primary">Hinzufügen</button>
+        </form>
+        {% for c in lead.comments %}
+          <div style="border-top:1px solid var(--border);padding-top:9px;margin-top:10px">
+            <div class="small muted">{% if c.author %}<span style="color:{{ user_color(c.author) }};font-weight:600">{{ c.author.name }}</span>{% else %}Unbekannt{% endif %} · {{ c.created_at|dt }}</div>
+            <div style="white-space:pre-wrap">{{ c.text }}</div>
+          </div>
+        {% else %}
+          <div class="muted small" style="margin-top:10px">Noch keine Kommentare.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <form method="post" action="{{ url_for('lead_delete', lead_id=lead.id) }}"
+          onsubmit="return confirm('Lead „{{ lead.company|e }}“ wirklich löschen?')">
+      <button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Lead löschen</button>
+    </form>
   </div>
 </div>
-
-<form method="post" action="{{ url_for('lead_delete', lead_id=lead.id) }}" style="margin-top:20px"
-      onsubmit="return confirm('Lead „{{ lead.company|e }}“ wirklich löschen?')">
-  <button class="btn link small">Lead löschen</button>
-</form>
+<style>@media (max-width: 900px) { .lead-grid { grid-template-columns: 1fr !important; } }</style>
+{% endblock %}
+{% block scripts %}
+<script>
+function updateMailto() {
+  const picked = [...document.querySelectorAll('#mailto-pick input:checked')].map(c => c.value);
+  const btn = document.getElementById('mailto-btn');
+  btn.href = 'mailto:' + picked.join(',');
+  btn.lastChild.textContent = ' E-Mail schreiben' + (picked.length > 1 ? ' an beide' : '');
+  btn.style.pointerEvents = picked.length ? '' : 'none';
+  btn.style.opacity = picked.length ? '' : '.4';
+}
+</script>
 {% endblock %}

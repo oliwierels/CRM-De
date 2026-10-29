@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- antenka -->
+  <circle cx="32" cy="12" r="3.2" fill="#ffffff"/>
+  <rect x="30.6" y="14" width="2.8" height="7" rx="1.4" fill="#ffffff"/>
+  <!-- uszy -->
+  <rect x="9" y="29" width="5" height="11" rx="2.5" fill="#ffffff" opacity=".9"/>
+  <rect x="50" y="29" width="5" height="11" rx="2.5" fill="#ffffff" opacity=".9"/>
+  <!-- głowa -->
+  <rect x="14" y="21" width="36" height="27" rx="9" fill="#ffffff"/>
+  <!-- oczy -->
+  <circle cx="25" cy="33.5" r="4.6" fill="#6366f1"/>
+  <circle cx="39" cy="33.5" r="4.6" fill="#6366f1"/>
+  <circle cx="26.6" cy="32" r="1.5" fill="#ffffff"/>
+  <circle cx="40.6" cy="32" r="1.5" fill="#ffffff"/>
+  <!-- uśmiech -->
+  <path d="M26 41.5 Q32 45.5 38 41.5" stroke="#a5b4fc" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+</svg>

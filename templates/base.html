@@ -1,82 +1,179 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Leads{% endblock %} · Posevo CRM</title>
+<title>{% block title %}Leads{% endblock %} – 33bots DE CRM</title>
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 <style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f5f6f8; --card: #fff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
-  --accent: #2f5bea; --accent-soft: #e8eefd; --ok: #13804b; --ok-soft: #e3f5ea; --warn: #b35c00; --warn-soft: #fdf0e1;
-  --danger: #c0352b;
+  --sidebar: 200px;
+  --bg: #111318; --panel: #1c1e26; --panel2: #23262f; --border: #2a2d38;
+  --text: #dde1f0; --muted: #6b7080; --accent: #5b5ef4;
+  --green: #22c55e; --yellow: #eab308; --red: #ef4444; --blue: #3b82f6; --purple: #7c3aed;
+  --radius: 8px;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14161b; --card: #1d2027; --text: #e8eaf0; --muted: #949bab; --line: #2c3039;
-    --accent: #6d8dff; --accent-soft: #232c45; --ok: #4fc58a; --ok-soft: #1a3027; --warn: #f0a24d; --warn-soft: #35291a;
-    --danger: #ff6b5e;
-  }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; line-height: 1.5; }
+a { color: inherit; text-decoration: none; }
+input, select, textarea, button { font-family: inherit; font-size: 13px; }
+
+/* SIDEBAR */
+.sidebar { width: var(--sidebar); background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; inset: 0 auto 0 0; z-index: 100; }
+.logo { padding: 16px 14px; font-weight: 700; font-size: 14px; color: var(--text); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.logo-de { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #5b5ef42a; color: var(--accent); }
+nav { padding: 8px 0; flex: 1; overflow-y: auto; }
+.nav-dash { display: flex; align-items: center; gap: 10px; margin: 4px 8px 8px; padding: 11px 12px; border-radius: var(--radius);
+            font-size: 15px; font-weight: 700; color: var(--text); background: var(--panel2); border: 1px solid var(--border); }
+.nav-dash i { font-size: 17px; }
+.nav-dash:hover, .nav-dash.active { border-color: var(--accent); background: #5b5ef41f; }
+.nav-label { padding: 9px 14px 5px; font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; }
+.nav-link { display: flex; align-items: center; gap: 9px; padding: 8px 14px 8px 22px; color: var(--muted); font-size: 13px; transition: color .1s, background .1s; }
+.nav-link:hover { color: var(--text); background: var(--panel2); }
+.nav-link.active { color: var(--text); background: var(--panel2); border-right: 2px solid var(--accent); }
+.nav-link i { font-size: 14px; width: 16px; }
+.k-count { background: rgba(255,255,255,.1); border-radius: 10px; padding: 1px 7px; font-size: 10px; font-weight: 600; }
+
+.users-section { padding: 10px 14px 14px; border-top: 1px solid var(--border); }
+.users-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px; display: flex; }
+.users-label a { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.user-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--radius); cursor: pointer; }
+.user-row:hover, .user-row.me { background: var(--panel2); }
+.av { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.user-name { font-size: 12px; flex: 1; }
+
+/* MAIN */
+.main { margin-left: var(--sidebar); flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topbar { background: var(--panel); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 50; flex-wrap: wrap; }
+.topbar-title { font-size: 15px; font-weight: 600; flex: 1; }
+.content { padding: 20px; }
+
+/* PANELS */
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+.panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; display: flex; align-items: center; gap: 6px; }
+.panel-body { padding: 12px 16px; }
+
+/* INPUTS */
+input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=time], select, textarea {
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); padding: 7px 10px; width: 100%; outline: none; transition: border-color .15s;
 }
-* { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
-a { color: var(--accent); text-decoration: none; }
-header { background: var(--card); border-bottom: 1px solid var(--line); }
-.bar { max-width: 1100px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-.brand { font-weight: 700; font-size: 17px; color: var(--text); }
-.brand span { color: var(--accent); }
-nav { display: flex; gap: 4px; }
-nav a { padding: 6px 10px; border-radius: 6px; color: var(--muted); }
-nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.me { margin-left: auto; display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
-main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-h1 { font-size: 22px; margin: 0 0 14px; }
-h2 { font-size: 16px; margin: 0 0 10px; }
-input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; width: 100%; }
-textarea { min-height: 80px; resize: vertical; }
-label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-.btn { display: inline-block; font: inherit; font-weight: 600; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 7px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
-.btn.small { padding: 4px 10px; font-size: 13px; }
-.btn.link { border: 0; background: none; color: var(--danger); padding: 0; font-weight: 400; }
-.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
-.pill.unterschrieben { background: var(--ok-soft); color: var(--ok); }
-.pill.nicht_unterschrieben { background: var(--warn-soft); color: var(--warn); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+select option { background: var(--panel2); }
+textarea { resize: vertical; }
+label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 4px; }
+
+/* BUTTONS */
+.btn { border: none; border-radius: var(--radius); padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: opacity .15s; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.btn:hover { opacity: .85; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-success { background: var(--green); color: #0b1a10; font-weight: 600; }
+.btn-secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { border-color: var(--accent); opacity: 1; }
+.btn-danger { background: transparent; color: var(--red); border: 1px solid transparent; }
+.btn-danger:hover { border-color: var(--red); opacity: 1; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* STATUS */
+.status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.status-badge.unterschrieben { background: #22c55e22; color: var(--green); }
+.status-badge.nicht_unterschrieben { background: #eab3081f; color: var(--yellow); }
+
+/* TABLE */
+table { width: 100%; border-collapse: collapse; }
+th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; font-weight: 500; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr[data-href] { cursor: pointer; }
+tr[data-href]:hover td { background: var(--panel2); }
+
+/* HELPERS */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.gap10 { display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.flex1 { flex: 1; }
 .muted { color: var(--muted); }
-.small { font-size: 13px; }
-.flash { background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
-.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
-@media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .me { margin-left: 0; width: 100%; } .hide-sm { display: none; } }
+.small { font-size: 12px; }
+.flash { background: #5b5ef41f; border: 1px solid #5b5ef455; color: var(--text); border-radius: var(--radius); padding: 9px 12px; margin-bottom: 14px; font-size: 12.5px; }
+.flash.warn { background: #eab3081a; border-color: #eab30855; color: #fde68a; }
+.fab { position: fixed; bottom: 24px; right: 24px; z-index: 300; width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: #fff; border: none; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(91,94,244,.4); }
+.fab:hover { transform: scale(1.08); }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* HANDY: Menü oben statt links */
+@media (max-width: 800px) {
+  body { flex-direction: column; }
+  .sidebar { position: static; width: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  .logo { padding: 12px 16px; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; }
+  .nav-dash { margin: 0; padding: 7px 10px; font-size: 13px; }
+  .nav-label { display: none; }
+  .nav-link { padding: 7px 10px; border-radius: var(--radius); }
+  .nav-link.active { border-right: none; }
+  .users-section { display: none; }
+  .main { margin-left: 0; }
+  .topbar { position: static; padding: 12px 16px; }
+  .content { padding: 16px; }
+  .grid2 { grid-template-columns: 1fr; }
+  .hide-sm { display: none; }
+}
 </style>
+{% block extra_head %}{% endblock %}
 </head>
 <body>
-<header>
-  <div class="bar">
-    <a class="brand" href="{{ url_for('leads') }}">Posevo <span>CRM</span></a>
-    <nav>
-      <a href="{{ url_for('leads') }}" class="{{ 'on' if request.endpoint in ('leads', 'lead_detail', 'lead_new') }}">Leads</a>
-      <a href="{{ url_for('calculator') }}" class="{{ 'on' if request.endpoint == 'calculator' }}">Kalkulator</a>
-      <a href="{{ url_for('team') }}" class="{{ 'on' if request.endpoint == 'team' }}">Team</a>
-      <a href="{{ url_for('settings') }}" class="{{ 'on' if request.endpoint == 'settings' }}">Einstellungen</a>
-    </nav>
-    <div class="me">
-      {% if team %}
-        Ich bin:
-        <select onchange="if(this.value) location.href='/ich/'+this.value+'?next='+encodeURIComponent(location.pathname+location.search)" style="width:auto">
-          <option value="">— auswählen —</option>
-          {% for u in team %}<option value="{{ u.id }}" {{ 'selected' if me and me.id == u.id }}>{{ u.name }}</option>{% endfor %}
-        </select>
-      {% else %}
-        <a href="{{ url_for('team') }}">Team anlegen</a>
-      {% endif %}
-    </div>
+{% set ep = request.endpoint %}
+{% set st = request.args.get('status', STATUS_OPEN) %}
+<aside class="sidebar">
+  <a class="logo" href="{{ url_for('leads') }}"><span>🤖</span> 33bots <span class="logo-de">DE CRM</span></a>
+  <nav>
+    <a href="{{ url_for('leads') }}" class="nav-dash {{ 'active' if ep == 'leads' and st == STATUS_OPEN }}">
+      <i class="bi bi-inbox"></i> Leads
+      {% if open_count %}<span class="k-count" style="margin-left:auto;background:var(--yellow);color:#111" title="Nicht unterschrieben">{{ open_count }}</span>{% endif %}
+    </a>
+    <div class="nav-label">Leads</div>
+    <a href="{{ url_for('leads', status=STATUS_OPEN) }}" class="nav-link {{ 'active' if ep == 'leads' and st == STATUS_OPEN }}"><i class="bi bi-hourglass-split"></i> Nicht unterschrieben</a>
+    <a href="{{ url_for('leads', status=STATUS_SIGNED) }}" class="nav-link {{ 'active' if ep == 'leads' and st == STATUS_SIGNED }}"><i class="bi bi-check2-circle"></i> Unterschrieben</a>
+    <a href="{{ url_for('leads', status='alle') }}" class="nav-link {{ 'active' if ep == 'leads' and st == 'alle' }}"><i class="bi bi-list-ul"></i> Alle Leads</a>
+    <div class="nav-label">Werkzeuge</div>
+    <a href="{{ url_for('calculator') }}" class="nav-link {{ 'active' if ep == 'calculator' }}"><i class="bi bi-calculator"></i> Kalkulator</a>
+    <a href="{{ url_for('team') }}" class="nav-link {{ 'active' if ep == 'team' }}"><i class="bi bi-people"></i> Team</a>
+  </nav>
+  <div class="users-section">
+    <div class="users-label">Ich bin <a href="{{ url_for('team') }}">Team</a></div>
+    {% for u in team %}
+    {% set c = user_color(u) %}
+    <a href="{{ url_for('choose_user', uid=u.id, next=request.full_path) }}" class="user-row {{ 'me' if me and me.id == u.id }}">
+      <div class="av" style="background:{{ c }}22;color:{{ c }}">{{ u.name[:1]|upper }}</div>
+      <span class="user-name">{{ u.name }}</span>
+      {% if me and me.id == u.id %}<i class="bi bi-check" style="color:{{ c }};font-size:14px"></i>{% endif %}
+    </a>
+    {% else %}
+    <a href="{{ url_for('team') }}" class="small" style="color:var(--accent)">+ Team anlegen</a>
+    {% endfor %}
   </div>
-</header>
-<main>
-  {% for msg in get_flashed_messages() %}<div class="flash">{{ msg }}</div>{% endfor %}
-  {% block content %}{% endblock %}
-</main>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-title">{% block page_title %}{% endblock %}</div>
+    {% block topbar_actions %}{% endblock %}
+  </div>
+  <div class="content">
+    {% for msg in get_flashed_messages() %}<div class="flash">{{ msg }}</div>{% endfor %}
+    {% block content %}{% endblock %}
+  </div>
+</div>
+
+{% if ep != 'lead_new' %}<a class="fab" href="{{ url_for('lead_new') }}" title="Neuer Lead">+</a>{% endif %}
+<script>
+document.addEventListener('click', function (e) {
+  const tr = e.target.closest('tr[data-href]');
+  if (tr && !e.target.closest('a, button, input, select')) location.href = tr.dataset.href;
+});
+</script>
+{% block scripts %}{% endblock %}
 </body>
 </html>
