@@ -964,6 +964,54 @@ def health():
     return jsonify({"ok": True})
 
 
+# ---------- FEHLERSEITEN (statt nacktem „Not Found“) ----------
+# Kunden (Rückruf-Formular /r/…) sehen eine freundliche Seite mit Kontaktadresse, das Team im CRM eine
+# Seite mit Weg zurück zu den Leads.
+from werkzeug.exceptions import HTTPException as _HTTPException
+
+_ERR_TEXT = {
+    "kunde": {404: ("🔗", "Dieser Link ist nicht mehr gültig",
+                    "Das Formular ist nicht mehr verfügbar. Schreiben Sie uns einfach — wir helfen gern:"),
+              500: ("🛠️", "Es ist ein Fehler aufgetreten",
+                    "Bitte versuchen Sie es in ein paar Minuten erneut oder schreiben Sie uns:")},
+    "team": {404: ("🔎", "Seite nicht gefunden", "Diese Adresse gibt es nicht oder der Eintrag wurde gelöscht."),
+             500: ("🛠️", "Etwas ist schiefgelaufen", "Bitte gleich noch einmal versuchen. Wenn der Fehler bleibt, 33bots Bescheid geben."),
+             "other": ("⚠️", "Das hat nicht geklappt", "Diese Aktion ist gerade nicht möglich.")},
+}
+
+
+def _error_page(code):
+    if request.is_json or "application/json" in request.headers.get("Accept", ""):
+        return jsonify({"error": code}), code
+    kunde = request.path.startswith("/r/")
+    texts = _ERR_TEXT["kunde" if kunde else "team"]
+    icon, title, message = texts.get(code) or texts.get("other") or texts[500]
+    return render_template(
+        "error.html", lang="de", icon=icon, title=title, message=message,
+        contact=mailer.config()["user"] if kunde else "",
+        back_url=None if kunde else url_for("leads"), back_label="Zurück zu den Leads",
+        code="" if kunde else f"Fehler {code}"), code
+
+
+@app.errorhandler(_HTTPException)
+def _http_error(e):
+    if e.code and e.code < 400:
+        return e
+    return _error_page(e.code or 500)
+
+
+@app.errorhandler(Exception)
+def _server_error(e):
+    if isinstance(e, _HTTPException):
+        return _http_error(e)
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+    app.logger.exception("Unbehandelter Fehler: %s", e)
+    return _error_page(500)
+
+
 def ensure_columns():
     """Neue Spalten in bestehenden Datenbanken nachziehen (create_all legt nur neue Tabellen an)."""
     wanted = {
