@@ -44,8 +44,9 @@ Gdy podpięta jest skrzynka **o.latek@33bots.de** (zmienne niżej), co 5 minut:
   o event, przede wszystkim — **kiedy możemy zadzwonić**. Link do 30-sekundowego formularza `/r/<token>`
   (dzień + przedział godzin + telefon, szczegóły eventu opcjonalnie). Wybrany termin pojawia się przy leadzie
   („📞 Rückruf: Mi, 05.11.2026, 9–12 Uhr”) i na liście leadów.
-- **Powiadomienie dla zespołu Posevo** (osoby z e-mailem w zakładce Team + `NOTIFY_EMAILS`): nowy lead,
-  wybrany termin oddzwonienia, odpowiedź klienta na maila.
+- **Powiadomienie dla Posevo** na **hi@posevo.de** (zmienna `NOTIFY_EMAILS`, można dodać kolejne po przecinku) i do osób
+  z e-mailem w zakładce Team: nowy lead, odpowiedź klienta na maila, wybrany termin oddzwonienia. Temat zaczyna się od
+  „[33bots]”, nadawca „33bots CRM”, w stopce informacja, że to wiadomość od 33bots.
 - **Historia korespondencji**: maile między o.latek@33bots.de a klientem (Odebrane i Wysłane, także pisane
   ręcznie w programie pocztowym) trafiają do komentarzy leada — bez cytowanej poprzedniej treści.
 - Tylko leady dodane po podpięciu skrzynki; starszym można wysłać mail przyciskiem na karcie leada.
@@ -58,7 +59,7 @@ Gdy podpięta jest skrzynka **o.latek@33bots.de** (zmienne niżej), co 5 minut:
 | `SMTP_PASS` | hasło do skrzynki |
 | `IMAP_HOST` / `IMAP_PORT` | jeśli inne niż SMTP / 993 |
 | `PUBLIC_URL` | adres CRM (np. `https://web-production-218a3.up.railway.app`) — do linków w mailach |
-| `NOTIFY_EMAILS` | opcjonalnie dodatkowe adresy powiadomień, po przecinku |
+| `NOTIFY_EMAILS` | adresy powiadomień, po przecinku (domyślnie `hi@posevo.de`) |
 | `AUTO_MAIL=0` / `NOTIFY=0` | wyłącza mail do klienta / powiadomienia |
 
 ## Wdrożenie na Railway
