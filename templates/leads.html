@@ -71,4 +71,14 @@
     ClickUp ist noch nicht verbunden — in Railway CLICKUP_API_TOKEN und CLICKUP_LIST_ID setzen.
   {% endif %}
 </p>
+<form method="post" action="{{ url_for('mailbox_sync_now') }}" class="small muted row" style="flex-wrap:wrap;gap:6px">
+  <input type="hidden" name="next" value="{{ request.full_path }}">
+  {% if mail_ok %}
+    E-Mail-Verlauf (o.latek@33bots.de): automatisch alle 5 Minuten{% if mail_sync %}, zuletzt {{ mail_sync.replace('T', ' ') }} UTC{% endif %}.
+    <button class="btn btn-secondary btn-sm"><i class="bi bi-arrow-repeat"></i> Postfach jetzt abgleichen</button>
+    {% if mail_error %}<span style="color:var(--red);width:100%">Problem: {{ mail_error }}</span>{% endif %}
+  {% else %}
+    E-Mail ist noch nicht eingerichtet — in Railway SMTP_HOST und SMTP_PASS setzen.
+  {% endif %}
+</form>
 {% endblock %}

@@ -84,10 +84,11 @@ def _sent_folder(im):
         if "\\Sent" in m.group("flags"):
             return name
         names.append(name)
-    for guess in ("Sent", "INBOX.Sent", "Gesendet", "INBOX.Gesendet", "Sent Items", "Sent Messages"):
+    for guess in ("Sent", "INBOX.Sent", "Gesendet", "INBOX.Gesendet", "Sent Items", "Sent Messages",
+                  "Wysłane", "INBOX.Wysłane", "INBOX.Sent Items", "INBOX.Sent Messages"):
         if guess in names:
             return guess
-    return None
+    return next((n for n in names if "sent" in n.lower() or "gesendet" in n.lower() or "wys" in n.lower()), None)
 
 
 def _save_sent(raw):
@@ -151,11 +152,13 @@ def fetch(folder, since):
     {message_id, date, from, to (Liste), subject, text}."""
     c = config()
     out = []
+    fetch.last_folder = folder if folder != "SENT" else None
     im = imaplib.IMAP4_SSL(c["imap_host"], c["imap_port"], timeout=30)
     try:
         im.login(c["user"], c["password"])
         if folder == "SENT":
             folder = _sent_folder(im)
+            fetch.last_folder = folder
             if not folder:
                 return out
         typ, _ = im.select(f'"{folder}"', readonly=True)
@@ -187,3 +190,6 @@ def fetch(folder, since):
         except Exception:
             pass
     return out
+
+
+fetch.last_folder = None
