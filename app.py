@@ -4,6 +4,7 @@ Leads kommen automatisch aus einer ClickUp-Liste, das Team bearbeitet sie hier:
 Status (unterschrieben / nicht unterschrieben), Zuständigkeit, Kontaktdaten, Kommentare.
 Keine Logins und Passwörter — wer gerade arbeitet, wählt sich oben aus der Teamliste aus.
 """
+import math
 import os
 import re
 import threading
@@ -53,6 +54,8 @@ class Lead(db.Model):
     status = db.Column(db.String(30), nullable=False, default=STATUS_OPEN, index=True)
     assigned_to = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     signed_at = db.Column(db.DateTime)
+    price_eur = db.Column(db.Float)  # Angebotspreis netto aus dem Kalkulator (inkl. Anfahrt)
+    price_note = db.Column(db.Text)  # Aufschlüsselung der Kalkulation
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -70,6 +73,15 @@ class Comment(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     author = db.relationship("User")
+
+
+class GeoCache(db.Model):
+    """Gemerkte Koordinaten eingegebener Orte (Nominatim wird pro Ort nur einmal gefragt)."""
+    __tablename__ = "geo_cache"
+    query = db.Column(db.String(200), primary_key=True)
+    lat = db.Column(db.Float)
+    lon = db.Column(db.Float)
+    label = db.Column(db.String(300))
 
 
 class Setting(db.Model):
@@ -458,6 +470,188 @@ def clickup_sync():
     result = sync_clickup_safe()
     flash(result["info"])
     return redirect(url_for("leads"))
+
+
+# ---------- KALKULATOR ----------
+# Preis = Tage × Tagespreis + Anfahrt. Die Anfahrt zählt nur auf deutscher Seite: von der Grenze
+# bis zum Veranstaltungsort und zurück. Wir starten in Warschau oder Kattowitz; der Kalkulator
+# rechnet für jeden Start den kürzesten Weg über einen der Grenzübergänge und nimmt daraus die
+# Kilometer ab Grenze. Strecken kommen von OSRM (OpenStreetMap), ohne Verbindung wird
+# geschätzt (Luftlinie × 1,25).
+
+ORIGINS = {
+    "WAW": ("Warschau", 52.2297, 21.0122),
+    "KTW": ("Kattowitz", 50.2649, 19.0238),
+}
+# Grenzübergänge nach Deutschland (Ortsmitte der deutschen Grenzstadt, auf wenige km genau)
+CROSSINGS = [
+    ("Frankfurt (Oder) / Świecko — A2/A12", 52.3420, 14.5506),
+    ("Görlitz / Jędrzychowice — A4", 51.1528, 14.9874),
+    ("Forst (Lausitz) / Olszyna — A18/A15", 51.7358, 14.6390),
+    ("Pomellen / Kołbaskowo — A6/A11", 53.3361, 14.3790),
+    ("Waidhaus / Rozvadov (über Tschechien) — A6", 49.6430, 12.4950),
+]
+CALC_DEFAULTS = {"day_price": 2500.0, "km_price": 1.0, "round_to": 50.0}
+ROAD_FACTOR = 1.25
+OSM_HEADERS = {"User-Agent": "Posevo-CRM/1.0 (Leadverwaltung, Entfernungsrechner)"}
+
+
+def calc_settings():
+    out = {}
+    for key, default in CALC_DEFAULTS.items():
+        try:
+            out[key] = float(get_setting(f"calc_{key}", default))
+        except (TypeError, ValueError):
+            out[key] = default
+    return out
+
+
+def _haversine_km(a, b):
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 2 * 6371 * math.asin(math.sqrt(h))
+
+
+def geocode(place):
+    """(lat, lon, label) für einen Ort/eine Adresse in Deutschland oder None."""
+    key = re.sub(r"\s+", " ", (place or "").strip().lower())[:200]
+    if not key:
+        return None
+    row = db.session.get(GeoCache, key)
+    if row:
+        return (row.lat, row.lon, row.label) if row.lat is not None else None
+    r = requests.get("https://nominatim.openstreetmap.org/search", headers=OSM_HEADERS, timeout=15,
+                     params={"q": place, "format": "json", "limit": 1, "countrycodes": "de"})
+    r.raise_for_status()
+    hits = r.json()
+    hit = (float(hits[0]["lat"]), float(hits[0]["lon"]), hits[0].get("display_name", place)[:300]) if hits else None
+    db.session.add(GeoCache(query=key, lat=hit[0] if hit else None, lon=hit[1] if hit else None,
+                            label=hit[2] if hit else None))
+    db.session.commit()
+    return hit
+
+
+def _road_table(points):
+    """Straßen-km zwischen allen Punkten (Matrix) über OSRM; None, wenn nicht erreichbar."""
+    coords = ";".join(f"{lon:.5f},{lat:.5f}" for lat, lon in points)
+    try:
+        r = requests.get(f"https://router.project-osrm.org/table/v1/driving/{coords}", headers=OSM_HEADERS,
+                         params={"annotations": "distance"}, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code") != "Ok":
+            return None
+        return [[(d / 1000.0 if d is not None else None) for d in row] for row in data["distances"]]
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return None
+
+
+def plan_routes(dest):
+    """Für jeden Start: bester Grenzübergang (kürzeste Gesamtstrecke) und km ab Grenze."""
+    origins = list(ORIGINS.items())
+    points = [(o[1], o[2]) for _, o in origins] + [(c[1], c[2]) for c in CROSSINGS] + [dest]
+    table = _road_table(points)
+    estimated = table is None
+    n_o, d_idx = len(origins), len(points) - 1
+
+    def km(i, j):
+        if table and table[i][j] is not None:
+            return table[i][j]
+        return _haversine_km(points[i], points[j]) * ROAD_FACTOR
+
+    plans = {}
+    for oi, (code, (oname, _, _)) in enumerate(origins):
+        best = None
+        for ci, crossing in enumerate(CROSSINGS):
+            c_idx = n_o + ci
+            pl, de = km(oi, c_idx), km(c_idx, d_idx)
+            if best is None or pl + de < best["total_km"]:
+                best = {"origin": oname, "crossing": crossing[0], "pl_km": pl, "de_km": de, "total_km": pl + de}
+        plans[code] = best
+    return plans, estimated
+
+
+def compute_price(days, day_price, de_km_one_way, km_price, round_to, extra=0.0):
+    rental = days * day_price
+    travel = 2 * de_km_one_way * km_price
+    raw = rental + travel + extra
+    total = math.ceil(raw / round_to) * round_to if round_to > 0 else raw
+    return {"rental": rental, "travel": travel, "extra": extra, "raw": raw, "total": total,
+            "per_day": total / days if days else total}
+
+
+@app.template_filter("eur")
+def format_eur(value):
+    if value is None:
+        return ""
+    s = f"{value:,.0f}".replace(",", ".")
+    return f"{s} €"
+
+
+@app.route("/kalkulator", methods=["GET", "POST"])
+def calculator():
+    cfg = calc_settings()
+    src = request.form if request.method == "POST" else request.args
+    lead = db.session.get(Lead, src.get("lead", type=int)) if src.get("lead", type=int) else None
+    form = {
+        "place": src.get("place", (lead.location if lead else "") or "").strip(),
+        "days": max(1, src.get("days", 1, type=int) or 1),
+        "day_price": src.get("day_price", cfg["day_price"], type=float),
+        "km_price": src.get("km_price", cfg["km_price"], type=float),
+        "extra": src.get("extra", 0.0, type=float) or 0.0,
+        "origin": src.get("origin", "auto"),
+        "manual_km": src.get("manual_km", type=float),
+    }
+    result, error = None, None
+    if form["place"] or form["manual_km"]:
+        try:
+            dest = geocode(form["place"]) if form["place"] else None
+            if form["place"] and not dest and not form["manual_km"]:
+                error = f"Ort „{form['place']}“ nicht gefunden — bitte PLZ und Ort angeben oder km manuell eintragen."
+            else:
+                plans, estimated = plan_routes(dest[:2]) if dest else ({}, False)
+                if form["manual_km"]:
+                    chosen_code, de_km = "manual", form["manual_km"]
+                else:
+                    chosen_code = form["origin"] if form["origin"] in plans else \
+                        min(plans, key=lambda c: plans[c]["total_km"])
+                    de_km = plans[chosen_code]["de_km"]
+                price = compute_price(form["days"], form["day_price"], de_km, form["km_price"],
+                                      cfg["round_to"], form["extra"])
+                result = {"dest": dest, "plans": plans, "estimated": estimated, "chosen": chosen_code,
+                          "de_km": de_km, "price": price}
+        except requests.exceptions.RequestException as e:
+            error = f"Kartendienst nicht erreichbar ({type(e).__name__}) — km ab Grenze bitte manuell eintragen."
+    if result and lead and request.method == "POST" and request.form.get("save") == "1":
+        p, plan = result["price"], result["plans"].get(result["chosen"])
+        route = (f"{plan['origin']} → {plan['crossing']} → {form['place']}" if plan
+                 else "km manuell eingetragen")
+        lead.price_eur = p["total"]
+        lead.price_note = (f"{form['days']} Tag(e) × {format_eur(form['day_price'])} = {format_eur(p['rental'])}\n"
+                           f"Anfahrt ab Grenze: 2 × {result['de_km']:.0f} km × {form['km_price']:.2f} € = {format_eur(p['travel'])}\n"
+                           + (f"Zuschlag: {format_eur(p['extra'])}\n" if p["extra"] else "")
+                           + f"Route: {route}\nAngebotspreis netto (gerundet): {format_eur(p['total'])}")
+        me = current_user()
+        db.session.add(Comment(lead_id=lead.id, user_id=me.id if me else None,
+                               text=f"Kalkulation gespeichert: {format_eur(p['total'])} netto inkl. Anfahrt\n{lead.price_note}"))
+        db.session.commit()
+        flash(f"Preis {format_eur(p['total'])} im Lead gespeichert.")
+        return redirect(url_for("lead_detail", lead_id=lead.id))
+    return render_template("calculator.html", form=form, result=result, error=error, lead=lead, cfg=cfg,
+                           ORIGINS=ORIGINS)
+
+
+@app.route("/einstellungen", methods=["GET", "POST"])
+def settings():
+    if request.method == "POST":
+        for key in CALC_DEFAULTS:
+            value = request.form.get(key, type=float)
+            if value is not None and value >= 0:
+                set_setting(f"calc_{key}", str(value))
+        db.session.commit()
+        flash("Einstellungen gespeichert.")
+        return redirect(url_for("settings"))
+    return render_template("settings.html", cfg=calc_settings(), crossings=CROSSINGS, origins=ORIGINS)
 
 
 @app.route("/health")

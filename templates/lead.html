@@ -14,6 +14,19 @@
   </form>
 </div>
 
+<div class="card row" style="justify-content:space-between;margin-bottom:14px">
+  <div>
+    <div class="small muted">Angebotspreis netto, inkl. Anfahrt</div>
+    {% if lead.price_eur %}
+      <div style="font-size:22px;font-weight:700">{{ lead.price_eur|eur }}</div>
+      <details class="small"><summary class="muted" style="cursor:pointer">Kalkulation</summary><div style="white-space:pre-wrap;margin-top:6px">{{ lead.price_note }}</div></details>
+    {% else %}
+      <div class="muted">Noch nicht kalkuliert</div>
+    {% endif %}
+  </div>
+  <a class="btn" href="{{ url_for('calculator', lead=lead.id) }}">🧮 {{ 'Neu kalkulieren' if lead.price_eur else 'Preis kalkulieren' }}</a>
+</div>
+
 <div class="grid2" style="gap:14px;align-items:start">
   <form class="card" method="post" action="{{ url_for('lead_edit', lead_id=lead.id) }}">
     <h2>Daten</h2>

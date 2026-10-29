@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Kalkulator{% endblock %}
+{% block content %}
+{% if lead %}<p class="small"><a href="{{ url_for('lead_detail', lead_id=lead.id) }}">← {{ lead.company }}</a></p>{% endif %}
+<h1>Kalkulator{% if lead %} · {{ lead.company }}{% endif %}</h1>
+
+<div class="grid2" style="gap:14px;align-items:start">
+  <form class="card" method="post" action="{{ url_for('calculator') }}">
+    {% if lead %}<input type="hidden" name="lead" value="{{ lead.id }}">{% endif %}
+    <label>Veranstaltungsort (PLZ und Ort oder Adresse in Deutschland)</label>
+    <input name="place" value="{{ form.place }}" placeholder="z. B. 80331 München" autofocus>
+    <div class="grid2">
+      <div><label>Tage</label><input name="days" type="number" min="1" value="{{ form.days }}"></div>
+      <div><label>Tagespreis (€ netto)</label><input name="day_price" type="number" min="0" step="50" value="{{ '%.0f'|format(form.day_price) }}"></div>
+      <div><label>Start</label>
+        <select name="origin">
+          <option value="auto" {{ 'selected' if form.origin == 'auto' }}>Automatisch (kürzere Strecke)</option>
+          {% for code, o in ORIGINS.items() %}<option value="{{ code }}" {{ 'selected' if form.origin == code }}>{{ o[0] }}</option>{% endfor %}
+        </select>
+      </div>
+      <div><label>Preis pro km (€)</label><input name="km_price" type="number" min="0" step="0.05" value="{{ '%.2f'|format(form.km_price) }}"></div>
+      <div><label>Zuschlag (€, optional)</label><input name="extra" type="number" min="0" step="10" value="{{ '%.0f'|format(form.extra) if form.extra else '' }}" placeholder="z. B. Hotel"></div>
+      <div><label>km ab Grenze manuell (optional)</label><input name="manual_km" type="number" min="0" step="1" value="{{ '%.0f'|format(form.manual_km) if form.manual_km else '' }}" placeholder="einfache Strecke"></div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary">Berechnen</button>
+      {% if lead and result %}<button class="btn ok" name="save" value="1">Im Lead speichern</button>{% endif %}
+    </div>
+    <p class="small muted" style="margin-bottom:0">
+      Anfahrt zählt nur in Deutschland: ab Grenzübergang bis zum Ort und zurück. Der Übergang wird automatisch
+      gewählt (kürzeste Gesamtstrecke ab Warschau bzw. Kattowitz). Ergebnis wird auf {{ '%.0f'|format(cfg.round_to) }} € aufgerundet.
+    </p>
+  </form>
+
+  <div>
+    {% if error %}<div class="flash" style="background:var(--warn-soft);color:var(--warn)">{{ error }}</div>{% endif %}
+    {% if result %}
+      {% set p = result.price %}
+      <div class="card" style="margin-bottom:14px">
+        <div class="small muted">Angebotspreis netto, inkl. Anfahrt</div>
+        <div style="font-size:34px;font-weight:700;line-height:1.2">{{ p.total|eur }}</div>
+        {% if form.days > 1 %}<div class="muted">= {{ p.per_day|eur }} pro Tag</div>{% endif %}
+        <button class="btn small" style="margin-top:10px" type="button"
+                onclick="navigator.clipboard.writeText(this.dataset.t);this.textContent='Kopiert ✓'"
+                data-t="{{ form.days }} Tag{{ 'e' if form.days > 1 }} Roboter-Einsatz{{ ' in ' ~ form.place if form.place }}: {{ p.total|eur }} netto inkl. Anfahrt">Angebotstext kopieren</button>
+        <table class="small" style="width:100%;margin-top:14px;border-collapse:collapse">
+          <tr><td class="muted" style="padding:3px 0">{{ form.days }} × {{ form.day_price|eur }}</td><td style="text-align:right">{{ p.rental|eur }}</td></tr>
+          <tr><td class="muted" style="padding:3px 0">Anfahrt 2 × {{ '%.0f'|format(result.de_km) }} km × {{ '%.2f'|format(form.km_price) }} €</td><td style="text-align:right">{{ p.travel|eur }}</td></tr>
+          {% if p.extra %}<tr><td class="muted" style="padding:3px 0">Zuschlag</td><td style="text-align:right">{{ p.extra|eur }}</td></tr>{% endif %}
+          {% if p.total != p.raw %}<tr><td class="muted" style="padding:3px 0">Rundung</td><td style="text-align:right">+{{ (p.total - p.raw)|eur }}</td></tr>{% endif %}
+        </table>
+      </div>
+      {% if result.plans %}
+      <div class="card">
+        <h2>Strecke{% if result.dest %} · <span class="muted small" style="font-weight:400">{{ result.dest[2] }}</span>{% endif %}</h2>
+        {% for code, pl in result.plans.items() %}
+          <div style="padding:8px 0;{{ 'border-top:1px solid var(--line)' if not loop.first }}">
+            <div class="row" style="justify-content:space-between">
+              <strong>ab {{ pl.origin }}</strong>
+              {% if result.chosen == code %}<span class="pill unterschrieben">berechnet</span>{% endif %}
+            </div>
+            <div class="small muted">über {{ pl.crossing }}</div>
+            <div class="small">Polen: {{ '%.0f'|format(pl.pl_km) }} km · <strong>Deutschland: {{ '%.0f'|format(pl.de_km) }} km</strong> · gesamt {{ '%.0f'|format(pl.total_km) }} km</div>
+          </div>
+        {% endfor %}
+        {% if result.chosen == 'manual' %}<p class="small muted">Berechnet mit manuell eingetragenen km.</p>{% endif %}
+        {% if result.estimated %}<p class="small" style="color:var(--warn)">Routenplaner nicht erreichbar — Strecken geschätzt (Luftlinie × 1,25).</p>{% endif %}
+      </div>
+      {% endif %}
+    {% elif not error %}
+      <div class="card muted">Ort eingeben und „Berechnen“ klicken.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

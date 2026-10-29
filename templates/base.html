@@ -57,7 +57,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px
     <a class="brand" href="{{ url_for('leads') }}">Posevo <span>CRM</span></a>
     <nav>
       <a href="{{ url_for('leads') }}" class="{{ 'on' if request.endpoint in ('leads', 'lead_detail', 'lead_new') }}">Leads</a>
+      <a href="{{ url_for('calculator') }}" class="{{ 'on' if request.endpoint == 'calculator' }}">Kalkulator</a>
       <a href="{{ url_for('team') }}" class="{{ 'on' if request.endpoint == 'team' }}">Team</a>
+      <a href="{{ url_for('settings') }}" class="{{ 'on' if request.endpoint == 'settings' }}">Einstellungen</a>
     </nav>
     <div class="me">
       {% if team %}
