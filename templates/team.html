@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Team{% endblock %}
+{% block content %}
+<h1>Team</h1>
+<p class="muted small" style="max-width:640px">
+  Keine Logins: Jede Person wählt sich oben bei „Ich bin“ aus. Danach werden Kommentare und Statusänderungen
+  mit ihrem Namen gespeichert. Mit E-Mail-Adresse werden Leads, die in ClickUp dieser Person zugewiesen sind,
+  automatisch ihr zugeordnet.
+</p>
+<div class="card" style="max-width:640px">
+  {% for u in users %}
+    <div class="row" style="justify-content:space-between;padding:8px 0;{{ 'border-top:1px solid var(--line)' if not loop.first }}">
+      <div>
+        <strong {% if not u.active %}class="muted"{% endif %}>{{ u.name }}</strong>
+        <span class="small muted">{{ u.email or '' }}{% if not u.active %} · inaktiv{% endif %}</span>
+      </div>
+      <form method="post" action="{{ url_for('team_toggle', uid=u.id) }}">
+        <button class="btn small">{{ 'Deaktivieren' if u.active else 'Aktivieren' }}</button>
+      </form>
+    </div>
+  {% else %}
+    <p class="muted">Noch niemand im Team.</p>
+  {% endfor %}
+  <form method="post" class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+    <input name="name" placeholder="Name" required style="flex:1;min-width:140px">
+    <input name="email" type="email" placeholder="E-Mail (optional, wie in ClickUp)" style="flex:1.4;min-width:180px">
+    <button class="btn primary">Hinzufügen</button>
+  </form>
+</div>
+{% endblock %}

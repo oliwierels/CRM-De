@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Neuer Lead{% endblock %}
+{% block content %}
+<p class="small"><a href="{{ url_for('leads') }}">← Alle Leads</a></p>
+<h1>Neuer Lead</h1>
+<form class="card" method="post" style="max-width:640px">
+  <label>Firma *</label><input name="company" required autofocus>
+  <div class="grid2">
+    <div><label>Ansprechpartner</label><input name="contact_name"></div>
+    <div><label>Telefon</label><input name="contact_phone"></div>
+    <div><label>E-Mail</label><input name="contact_email" type="email"></div>
+    <div><label>Ort</label><input name="location"></div>
+    <div><label>Termin</label><input name="event_date" type="date"></div>
+    <div><label>Zuständig</label>
+      <select name="assigned_to">
+        <option value="">— niemand —</option>
+        {% for u in team %}<option value="{{ u.id }}" {{ 'selected' if me and me.id == u.id }}>{{ u.name }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+  <label>Anfrage / Notizen</label><textarea name="notes"></textarea>
+  <button class="btn primary" style="margin-top:12px">Lead anlegen</button>
+</form>
+{% endblock %}

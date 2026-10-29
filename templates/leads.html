@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row" style="justify-content:space-between;margin-bottom:14px">
+  <h1 style="margin:0">Leads</h1>
+  <div class="row">
+    {% if clickup_ok %}
+    <form method="post" action="{{ url_for('clickup_sync') }}">
+      <button class="btn" title="Neue Leads sofort aus ClickUp holen (läuft sonst automatisch alle 5 Minuten)">↻ ClickUp abrufen</button>
+    </form>
+    {% endif %}
+    <a class="btn primary" href="{{ url_for('lead_new') }}">+ Neuer Lead</a>
+  </div>
+</div>
+
+<div class="row" style="margin-bottom:12px">
+  {% set tabs = [(STATUS_OPEN, 'Nicht unterschrieben'), (STATUS_SIGNED, 'Unterschrieben'), ('alle', 'Alle')] %}
+  {% for key, label in tabs %}
+    {% set n = counts.get(key, 0) if key != 'alle' else total %}
+    <a class="btn small {{ 'primary' if status == key }}" href="{{ url_for('leads', status=key, q=q or None, who=who or None) }}">{{ label }} · {{ n }}</a>
+  {% endfor %}
+</div>
+
+<form class="row" method="get" style="margin-bottom:14px">
+  <input type="hidden" name="status" value="{{ status }}">
+  <input name="q" value="{{ q }}" placeholder="Suche: Firma, Name, E-Mail, Telefon, Ort…" style="flex:1;min-width:200px">
+  <select name="who" style="width:auto">
+    <option value="">Alle Personen</option>
+    <option value="none" {{ 'selected' if who == 'none' }}>Nicht zugewiesen</option>
+    {% for u in team %}<option value="{{ u.id }}" {{ 'selected' if who == u.id|string }}>{{ u.name }}</option>{% endfor %}
+  </select>
+  <button class="btn">Suchen</button>
+</form>
+
+<div class="card" style="padding:0;overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr class="muted small" style="text-align:left">
+        <th style="padding:10px 14px">Firma / Kontakt</th>
+        <th style="padding:10px 8px" class="hide-sm">Termin</th>
+        <th style="padding:10px 8px">Zuständig</th>
+        <th style="padding:10px 8px">Status</th>
+        <th style="padding:10px 14px 10px 8px" class="hide-sm">Eingang</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for l in leads %}
+      <tr style="border-top:1px solid var(--line)">
+        <td style="padding:10px 14px">
+          <a href="{{ url_for('lead_detail', lead_id=l.id) }}" style="font-weight:600">{{ l.company }}</a>
+          <div class="muted small">{{ l.contact_name or '' }}{% if l.contact_phone %} · {{ l.contact_phone }}{% endif %}{% if l.location %} · {{ l.location }}{% endif %}</div>
+        </td>
+        <td style="padding:10px 8px" class="small hide-sm">{{ l.event_date|d }}</td>
+        <td style="padding:10px 8px" class="small">{{ l.assignee.name if l.assignee else '—' }}</td>
+        <td style="padding:10px 8px"><span class="pill {{ l.status }}">{{ STATUSES[l.status] }}</span></td>
+        <td style="padding:10px 14px 10px 8px" class="small muted hide-sm">{{ l.created_at|d }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" style="padding:30px;text-align:center" class="muted">Keine Leads gefunden.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="small muted" style="margin-top:12px">
+  {% if clickup_ok %}
+    ClickUp: automatischer Abruf alle 5 Minuten{% if last_sync %}, zuletzt {{ last_sync.replace('T', ' ') }} UTC{% endif %}.
+    {% if last_error %}<br><span style="color:var(--danger)">Letzter Fehler: {{ last_error }}</span>{% endif %}
+  {% else %}
+    ClickUp ist noch nicht verbunden — in Railway CLICKUP_API_TOKEN und CLICKUP_LIST_ID setzen.
+  {% endif %}
+</p>
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ lead.company }}{% endblock %}
+{% block content %}
+<p class="small"><a href="{{ url_for('leads') }}">← Alle Leads</a></p>
+<div class="row" style="justify-content:space-between;margin-bottom:14px">
+  <h1 style="margin:0">{{ lead.company }}</h1>
+  <form method="post" action="{{ url_for('lead_status', lead_id=lead.id) }}" class="row">
+    <span class="pill {{ lead.status }}">{{ STATUSES[lead.status] }}</span>
+    {% if lead.status == STATUS_SIGNED %}
+      <button class="btn small" name="status" value="{{ STATUS_OPEN }}">Auf „nicht unterschrieben“ setzen</button>
+    {% else %}
+      <button class="btn ok" name="status" value="{{ STATUS_SIGNED }}">✓ Unterschrieben</button>
+    {% endif %}
+  </form>
+</div>
+
+<div class="grid2" style="gap:14px;align-items:start">
+  <form class="card" method="post" action="{{ url_for('lead_edit', lead_id=lead.id) }}">
+    <h2>Daten</h2>
+    <label>Firma</label><input name="company" value="{{ lead.company }}" required>
+    <div class="grid2">
+      <div><label>Ansprechpartner</label><input name="contact_name" value="{{ lead.contact_name or '' }}"></div>
+      <div><label>Telefon</label><input name="contact_phone" value="{{ lead.contact_phone or '' }}"></div>
+      <div><label>E-Mail</label><input name="contact_email" type="email" value="{{ lead.contact_email or '' }}"></div>
+      <div><label>Ort</label><input name="location" value="{{ lead.location or '' }}"></div>
+      <div><label>Termin</label><input name="event_date" type="date" value="{{ lead.event_date.isoformat() if lead.event_date else '' }}"></div>
+      <div><label>Zuständig</label>
+        <select name="assigned_to">
+          <option value="">— niemand —</option>
+          {% for u in team %}<option value="{{ u.id }}" {{ 'selected' if lead.assigned_to == u.id }}>{{ u.name }}</option>{% endfor %}
+          {% if lead.assignee and not lead.assignee.active %}<option value="{{ lead.assignee.id }}" selected>{{ lead.assignee.name }} (inaktiv)</option>{% endif %}
+        </select>
+      </div>
+    </div>
+    <label>Anfrage / Notizen</label><textarea name="notes" rows="6">{{ lead.notes or '' }}</textarea>
+    <div class="row" style="margin-top:12px;justify-content:space-between">
+      <button class="btn primary">Speichern</button>
+      <span class="small muted">
+        {% if lead.clickup_task_id %}<a href="https://app.clickup.com/t/{{ lead.clickup_task_id }}" target="_blank" rel="noopener">In ClickUp öffnen ↗</a> · {% endif %}
+        Eingang {{ lead.created_at|dt }}{% if lead.signed_at %} · unterschrieben {{ lead.signed_at|d }}{% endif %}
+      </span>
+    </div>
+  </form>
+
+  <div class="card">
+    <h2>Kommentare</h2>
+    <form method="post" action="{{ url_for('lead_comment', lead_id=lead.id) }}">
+      <textarea name="text" rows="3" placeholder="{{ 'Kommentar als ' ~ me.name if me else 'Kommentar (oben auswählen, wer du bist)' }}" required></textarea>
+      <button class="btn primary" style="margin-top:8px">Hinzufügen</button>
+    </form>
+    {% for c in lead.comments %}
+      <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:12px">
+        <div class="small muted">{{ c.author.name if c.author else 'Unbekannt' }} · {{ c.created_at|dt }}</div>
+        <div style="white-space:pre-wrap">{{ c.text }}</div>
+      </div>
+    {% else %}
+      <p class="muted small">Noch keine Kommentare.</p>
+    {% endfor %}
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('lead_delete', lead_id=lead.id) }}" style="margin-top:20px"
+      onsubmit="return confirm('Lead „{{ lead.company|e }}“ wirklich löschen?')">
+  <button class="btn link small">Lead löschen</button>
+</form>
+{% endblock %}
