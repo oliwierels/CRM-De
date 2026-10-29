@@ -36,7 +36,7 @@ def configured():
     return bool(c["host"] and c["password"])
 
 
-def send(to_addrs, subject, body, reply_to=None):
+def send(to_addrs, subject, body, reply_to=None, from_name=None):
     """Sendet eine Text-E-Mail. Gibt (Message-ID, None) oder (None, Fehlertext) zurück."""
     c = config()
     if not configured():
@@ -46,7 +46,7 @@ def send(to_addrs, subject, body, reply_to=None):
         return None, "keine Empfänger"
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
-    msg["From"] = formataddr((c["from_name"], c["user"]))
+    msg["From"] = formataddr((from_name or c["from_name"], c["user"]))
     msg["To"] = ", ".join(to_addrs)
     if reply_to:
         msg["Reply-To"] = reply_to

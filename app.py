@@ -778,17 +778,21 @@ def send_customer_mail(lead, user_id=None):
 
 
 def team_emails():
-    extra = [e.strip() for e in os.environ.get("NOTIFY_EMAILS", "").split(",") if e.strip()]
-    return list(dict.fromkeys([u.email for u in active_users() if u.email] + extra))
+    """Empfänger der Benachrichtigungen: NOTIFY_EMAILS (Standard hi@posevo.de) + Team mit E-Mail."""
+    extra = [e.strip() for e in os.environ.get("NOTIFY_EMAILS", "hi@posevo.de").split(",") if e.strip()]
+    return list(dict.fromkeys(extra + [u.email for u in active_users() if u.email]))
 
 
 def notify_team(subject, body):
+    """Benachrichtigung ans Posevo-Team — erkennbar als Nachricht von 33bots."""
     if os.environ.get("NOTIFY", "1") == "0" or not mailer.configured():
         return None
     to = team_emails()
     if not to:
         return None
-    return mailer.send(to, subject, body)[1]
+    footer = ("\n\n—\nDiese Benachrichtigung kommt von 33bots (33bots DE CRM, Oliwier Latek)."
+              + (f"\nAlle Leads: {public_base_url()}" if public_base_url() else ""))
+    return mailer.send(to, f"[33bots] {subject}", body + footer, from_name="33bots CRM")[1]
 
 
 def lead_url(lead):
