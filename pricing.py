@@ -4,10 +4,12 @@ Regeln (wie im polnischen 33bots-CRM, in Euro):
 - 8 h vor Ort = Tagespreis (Standard 2500 € netto), 4 h = 6/8, 2 h = 4/8 davon,
 - jede Stunde nach 22:00 (bis 6:00) zählt × 1,5 des Stundensatzes des Pakets,
 - Anfahrt = km ab Grenzübergang bis zum Ort × 2 (hin und zurück) × Preis pro km, degressiv:
-  die ersten 150 km voll, 150–400 km zu 60 %, ab 400 km zu 30 % — so bleiben wir auch im Westen
+  die ersten 150 km voll, 150–400 km zu 50 %, ab 400 km zu 15 % — so bleiben wir auch im Westen
   und Süden konkurrenzfähig und wirken nicht wie ein Anbieter nur für Ostdeutschland,
 - Deckel: Anfahrt + Übernachtung höchstens (Höchstpreis pro Tag − Tagespreis) × Tage; bei 8 h kostet
-  ein Tag damit nie mehr als 3200 € (CALC_MAX_DAY), egal wie weit (Nachtzuschlag kommt extra dazu),
+  ein Tag damit nie mehr als 3400 € (CALC_MAX_DAY), egal wie weit (Nachtzuschlag kommt extra dazu).
+  Die Staffel ist so flach, dass die 3400 € praktisch nur bei extremen Strecken (~800 km ab Grenze)
+  erreicht werden — der Westen landet bei 3200–3300 €,
 - mehrere Tage: 2 Tage −10 %, ab 3 Tagen −15 % auf alles; das Team bleibt vor Ort
   (eine Anfahrt für den ganzen Einsatz),
 - Übernachtung immer: eine Nacht pro Einsatztag,
@@ -27,7 +29,7 @@ HOUR_FACTORS = {8: 8 / 8, 4: 6 / 8, 2: 4 / 8}
 NIGHT_FROM, NIGHT_TO = 22, 6
 NIGHT_MULT = 1.5
 # degressive Anfahrt: (bis km ab Grenze, Anteil des km-Preises)
-TRAVEL_TIERS = [(150, 1.0), (400, 0.6), (float("inf"), 0.3)]
+TRAVEL_TIERS = [(150, 1.0), (400, 0.5), (float("inf"), 0.15)]
 DAY_DISCOUNTS = {2: 0.10, 3: 0.15}
 MAX_DAYS = 7
 TRIPS = 2
@@ -47,7 +49,7 @@ def rates():
     """Aktuelle Sätze (Railway-Variablen oder Standard). Nur intern — nicht im CRM anzeigen."""
     return {
         "day_price": _env_float("CALC_DAY_PRICE", 2500.0),
-        "max_day": _env_float("CALC_MAX_DAY", 3200.0),
+        "max_day": _env_float("CALC_MAX_DAY", 3400.0),
         "km_price": _env_float("CALC_KM_PRICE", 1.0),
         "lodging": _env_float("CALC_LODGING", 150.0),
         "round_to": _env_float("CALC_ROUND_TO", 100.0),
