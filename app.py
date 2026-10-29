@@ -47,6 +47,7 @@ class Lead(db.Model):
     company = db.Column(db.String(200), nullable=False)
     contact_name = db.Column(db.String(200))
     contact_email = db.Column(db.String(200))
+    contact_email2 = db.Column(db.String(200))  # zweite E-Mail (z. B. Assistenz, Buchhaltung)
     contact_phone = db.Column(db.String(60))
     location = db.Column(db.String(200))
     event_date = db.Column(db.Date)
@@ -60,6 +61,17 @@ class Lead(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     assignee = db.relationship("User")
+
+    @property
+    def emails(self):
+        """Gültige Adressen (Haupt-, dann zweite E-Mail), ohne Doppelte."""
+        out = []
+        for e in (self.contact_email, self.contact_email2):
+            e = (e or "").strip()
+            if e and _EMAIL_RE.fullmatch(e) and e.lower() not in [x.lower() for x in out]:
+                out.append(e)
+        return out
+
     comments = db.relationship("Comment", backref="lead", cascade="all, delete-orphan",
                                order_by="Comment.created_at.desc()")
 
@@ -222,6 +234,10 @@ def task_to_fields(task):
             if value:
                 fields.setdefault("event_date", value)
                 continue
+        elif target == "contact_email" and "contact_email" in fields and "contact_email2" not in fields \
+                and str(value).strip().lower() != fields["contact_email"].lower():
+            fields["contact_email2"] = str(value)[:200]  # zweites E-Mail-Feld im Formular
+            continue
         elif target and target not in fields:
             fields[target] = str(value)[:200]
             continue
@@ -280,7 +296,7 @@ def sync_clickup():
             fields = task_to_fields(task)
             lead = Lead.query.filter_by(clickup_task_id=tid).first()
             if lead:
-                for f in ("contact_name", "contact_email", "contact_phone", "location", "event_date"):
+                for f in ("contact_name", "contact_email", "contact_email2", "contact_phone", "location", "event_date"):
                     if not getattr(lead, f) and fields.get(f):
                         setattr(lead, f, fields[f])
                 continue
@@ -338,7 +354,8 @@ def leads():
     if q:
         like = f"%{q}%"
         query = query.filter(db.or_(Lead.company.ilike(like), Lead.contact_name.ilike(like),
-                                    Lead.contact_email.ilike(like), Lead.contact_phone.ilike(like),
+                                    Lead.contact_email.ilike(like), Lead.contact_email2.ilike(like),
+                                    Lead.contact_phone.ilike(like),
                                     Lead.location.ilike(like), Lead.notes.ilike(like)))
     if who == "none":
         query = query.filter(Lead.assigned_to.is_(None))
@@ -375,7 +392,7 @@ def lead_new():
 
 
 def _apply_form(lead, form):
-    for f in ("company", "contact_name", "contact_email", "contact_phone", "location"):
+    for f in ("company", "contact_name", "contact_email", "contact_email2", "contact_phone", "location"):
         if f in form:
             value = form.get(f, "").strip()[:200]
             if f == "company" and not value:
@@ -660,8 +677,21 @@ def health():
     return jsonify({"ok": True})
 
 
+def ensure_columns():
+    """Neue Spalten in bestehenden Datenbanken nachziehen (create_all legt nur neue Tabellen an)."""
+    wanted = {"leads": {"contact_email2": "VARCHAR(200)", "price_eur": "FLOAT", "price_note": "TEXT"}}
+    insp = db.inspect(db.engine)
+    with db.engine.begin() as conn:
+        for table, cols in wanted.items():
+            have = {c["name"] for c in insp.get_columns(table)}
+            for col, typ in cols.items():
+                if col not in have:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
+
 with app.app_context():
     db.create_all()
+    ensure_columns()
 
 if clickup_configured() and os.environ.get("CLICKUP_AUTOSYNC", "1") != "0":
     threading.Thread(target=_clickup_scheduler, daemon=True).start()

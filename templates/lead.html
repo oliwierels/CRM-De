@@ -35,6 +35,7 @@
       <div><label>Ansprechpartner</label><input name="contact_name" value="{{ lead.contact_name or '' }}"></div>
       <div><label>Telefon</label><input name="contact_phone" value="{{ lead.contact_phone or '' }}"></div>
       <div><label>E-Mail</label><input name="contact_email" type="email" value="{{ lead.contact_email or '' }}"></div>
+      <div><label>Zweite E-Mail <span class="muted">(optional)</span></label><input name="contact_email2" type="email" value="{{ lead.contact_email2 or '' }}"></div>
       <div><label>Ort</label><input name="location" value="{{ lead.location or '' }}"></div>
       <div><label>Termin</label><input name="event_date" type="date" value="{{ lead.event_date.isoformat() if lead.event_date else '' }}"></div>
       <div><label>Zuständig</label>
@@ -55,6 +56,31 @@
     </div>
   </form>
 
+  <div>
+  {% if lead.emails %}
+  <div class="card" style="margin-bottom:14px">
+    <h2>E-Mail schreiben</h2>
+    <div id="mailto-pick">
+      {% for e in lead.emails %}
+      <label class="row" style="gap:6px;margin:4px 0;color:var(--text);font-size:14px">
+        <input type="checkbox" value="{{ e }}" checked style="width:auto" onchange="updateMailto()"> {{ e }}
+      </label>
+      {% endfor %}
+    </div>
+    <a id="mailto-btn" class="btn primary" style="margin-top:8px" href="mailto:{{ lead.emails|join(',') }}">✉️ E-Mail schreiben{{ ' an beide' if lead.emails|length > 1 }}</a>
+    <p class="small muted" style="margin-bottom:0">Öffnet das E-Mail-Programm mit den ausgewählten Empfängern.</p>
+  </div>
+  <script>
+  function updateMailto() {
+    const picked = [...document.querySelectorAll('#mailto-pick input:checked')].map(c => c.value);
+    const btn = document.getElementById('mailto-btn');
+    btn.href = 'mailto:' + picked.join(',');
+    btn.textContent = '✉️ E-Mail schreiben' + (picked.length > 1 ? ' an beide' : '');
+    btn.style.pointerEvents = picked.length ? '' : 'none';
+    btn.style.opacity = picked.length ? '' : '.4';
+  }
+  </script>
+  {% endif %}
   <div class="card">
     <h2>Kommentare</h2>
     <form method="post" action="{{ url_for('lead_comment', lead_id=lead.id) }}">
@@ -69,6 +95,7 @@
     {% else %}
       <p class="muted small">Noch keine Kommentare.</p>
     {% endfor %}
+  </div>
   </div>
 </div>
 
