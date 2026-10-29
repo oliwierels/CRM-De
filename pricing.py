@@ -3,9 +3,11 @@
 Regeln (wie im polnischen 33bots-CRM, in Euro):
 - 8 h vor Ort = Tagespreis (Standard 2500 € netto), 4 h = 6/8, 2 h = 4/8 davon,
 - jede Stunde nach 22:00 (bis 6:00) zählt × 1,5 des Stundensatzes des Pakets,
-- Anfahrt = km ab Grenzübergang bis zum Ort × 2 (hin und zurück) × Preis pro km,
-- die Anfahrt darf höchstens 30 % des Preises sein — sonst steigt der Preis so weit,
-  dass sie genau 30 % ausmacht,
+- Anfahrt = km ab Grenzübergang bis zum Ort × 2 (hin und zurück) × Preis pro km, degressiv:
+  die ersten 150 km voll, 150–400 km zu 60 %, ab 400 km zu 30 % — so bleiben wir auch im Westen
+  und Süden konkurrenzfähig und wirken nicht wie ein Anbieter nur für Ostdeutschland,
+- Deckel: Anfahrt + Übernachtung höchstens (Höchstpreis pro Tag − Tagespreis) × Tage; bei 8 h kostet
+  ein Tag damit nie mehr als 3200 € (CALC_MAX_DAY), egal wie weit (Nachtzuschlag kommt extra dazu),
 - mehrere Tage: 2 Tage −10 %, ab 3 Tagen −15 % auf alles; das Team bleibt vor Ort
   (eine Anfahrt für den ganzen Einsatz),
 - Übernachtung immer: eine Nacht pro Einsatztag,
@@ -13,12 +15,10 @@ Regeln (wie im polnischen 33bots-CRM, in Euro):
   (die Abfahrt wird im CRM nicht gezeigt).
 
 Angebotsposten (lines): Roboter-Miete, Nachtzuschlag, Anfahrt, Übernachtung, Rabatt — in runden
-Beträgen (auf 10 €), Summe = Angebotspreis. Die Anfahrt mit Übernachtung ist nie mehr als 30 % —
-was der Preis darüber hinaus steigt, steckt in der Miete, damit die Posten „menschlich“ aussehen
-(Miete ist immer der größte Posten).
+Beträgen (Miete auf 50 €, Rest auf 10 €), Summe = Angebotspreis; die Miete ist immer der größte Posten.
 
 Die Sätze sind nicht im CRM sichtbar: Standardwerte hier, Änderungen über Railway-Variablen
-(CALC_DAY_PRICE, CALC_KM_PRICE, CALC_LODGING, CALC_ROUND_TO).
+(CALC_DAY_PRICE, CALC_MAX_DAY, CALC_KM_PRICE, CALC_LODGING, CALC_ROUND_TO).
 """
 import math
 import os
@@ -26,7 +26,8 @@ import os
 HOUR_FACTORS = {8: 8 / 8, 4: 6 / 8, 2: 4 / 8}
 NIGHT_FROM, NIGHT_TO = 22, 6
 NIGHT_MULT = 1.5
-TRAVEL_MAX_SHARE = 0.30
+# degressive Anfahrt: (bis km ab Grenze, Anteil des km-Preises)
+TRAVEL_TIERS = [(150, 1.0), (400, 0.6), (float("inf"), 0.3)]
 DAY_DISCOUNTS = {2: 0.10, 3: 0.15}
 MAX_DAYS = 7
 TRIPS = 2
@@ -46,6 +47,7 @@ def rates():
     """Aktuelle Sätze (Railway-Variablen oder Standard). Nur intern — nicht im CRM anzeigen."""
     return {
         "day_price": _env_float("CALC_DAY_PRICE", 2500.0),
+        "max_day": _env_float("CALC_MAX_DAY", 3200.0),
         "km_price": _env_float("CALC_KM_PRICE", 1.0),
         "lodging": _env_float("CALC_LODGING", 150.0),
         "round_to": _env_float("CALC_ROUND_TO", 100.0),
@@ -99,26 +101,36 @@ def quote(hours, de_km_one_way, night=0.0, days=1, r=None):
     hourly = base / hours
     night_extra = round(night * hourly * (NIGHT_MULT - 1))
     onsite = (base + night_extra) * days
-    travel = round(km * TRIPS * r["km_price"])
+    travel_full = round(travel_km(km) * TRIPS * r["km_price"])
     lodging = round(r["lodging"] * days)
-    trip = travel + lodging
-    subtotal = onsite + trip
+    trip_cap = max(0.0, (r["max_day"] - r["day_price"]) * days)
+    travel = max(0, min(travel_full, round(trip_cap - lodging)))
+    capped = travel < travel_full
+    subtotal = onsite + travel + lodging
     raise_by = 0
-    if subtotal and trip > TRAVEL_MAX_SHARE * subtotal:
-        lifted = math.ceil(trip / TRAVEL_MAX_SHARE)
-        raise_by, subtotal = lifted - subtotal, lifted
     pct = day_discount(days)
     discount = round(subtotal * pct)
     total = subtotal - discount
     step = r["round_to"] if r["round_to"] > 0 else 1
     q = {
         "hours": hours, "days": days, "km": km, "night": night, "night_extra": night_extra,
-        "travel": travel, "lodging": lodging, "nights": days, "lodging_rate": r["lodging"],
+        "travel": travel, "travel_full": travel_full, "capped": capped, "lodging": lodging, "nights": days, "lodging_rate": r["lodging"],
         "discount_pct": pct, "discount": discount, "raise_by": raise_by, "subtotal": subtotal, "total": total,
         "rounded": int(math.ceil(total / step) * step), "per_day": total / days,
     }
     q["lines"] = offer_lines(q)
     return q
+
+
+def travel_km(km):
+    """Abrechenbare km (einfach) nach der degressiven Staffel."""
+    out, prev = 0.0, 0.0
+    for limit, share in TRAVEL_TIERS:
+        if km <= prev:
+            break
+        out += (min(km, limit) - prev) * share
+        prev = limit
+    return out
 
 
 def _r10(value):
