@@ -1,59 +1,65 @@
-# Posevo CRM
+# 33bots DE CRM
 
-Prosty CRM dla Posevo do obsługi niemieckich leadów. Interfejs jest po niemiecku.
+Prosty CRM do obsługi niemieckich leadów (zespół Posevo). Interfejs po niemiecku, wygląd jak polski CRM 33bots.
 
 - Leady wpadają automatycznie z listy ClickUp (co 5 minut, plus przycisk „ClickUp abrufen”).
 - Dwa statusy: **Nicht unterschrieben** (każdy nowy lead) i **Unterschrieben**.
-- Osoba odpowiedzialna, dane kontaktowe, termin, notatki i komentarze przy każdym leadzie.
-- Kalkulator ceny z dojazdem liczonym od granicy (opis niżej).
-- Bez logowania i haseł: każdy wybiera siebie z listy „Ich bin” (zapisywane w cookie).
+- Osoba odpowiedzialna, dane kontaktowe (dwa adresy e-mail), termin, notatki i komentarze przy każdym leadzie.
+- Kalkulator ceny jak w polskim CRM (opis niżej) — bez widocznych stawek.
+- Bez logowania i haseł: każdy wybiera siebie z listy „Ich bin” w menu (zapisywane w cookie).
   Zespół dodaje się w zakładce **Team**.
 - Bez funkcji AI i bez połączenia z API 33bots.
 
 ## Kalkulator
 
-Zakładka **Kalkulator** (albo przycisk „Preis kalkulieren” na karcie leada):
+Pola jak w polskim kalkulatorze: miejsce, czas na miejscu (8 / 4 / 2 h), liczba dni, godzina rozpoczęcia,
+wyjazd z Warszawy albo Katowic, opcjonalnie km od granicy wpisane ręcznie. Wynik: jedna cena
+„netto inkl. Anfahrt” (zaokrąglona w górę), porównanie z drugim miejscem wyjazdu, zapis w leadzie.
 
-- **Cena** = dni × stawka dzienna (domyślnie 2500 € netto) + dojazd + opcjonalny dopłata, zaokrąglone w górę (domyślnie do 50 €).
-- **Dojazd** liczy się tylko po niemieckiej stronie: od przejścia granicznego do miejsca eventu i z powrotem, × stawka za km (domyślnie 1 €/km).
-- Wyjazd z **Warszawy lub Katowic**. Dla każdego startu kalkulator sam wybiera przejście z najkrótszą całą trasą
-  (Frankfurt (Oder), Görlitz, Forst, Pomellen albo Waidhaus przez Czechy) i pokazuje oba warianty.
-  „Automatisch” liczy z miasta, z którego cała trasa jest krótsza; można też wybrać start ręcznie.
-- Wynik to jedna kwota „netto inkl. Anfahrt” (+ cena za dzień przy kilku dniach) i przycisk do skopiowania tekstu oferty.
-- „Im Lead speichern” zapisuje cenę i rozpisanie w leadzie i w komentarzach.
-- Kilometry: OpenStreetMap (Nominatim do wyszukania miejsca, OSRM do trasy). Gdy serwis nie odpowiada,
-  kalkulator szacuje (linia prosta × 1,25) i to zaznacza; można też wpisać km od granicy ręcznie.
-- Stawki domyślne zmienia się w zakładce **Einstellungen**.
+Zasady (`pricing.py`):
+- 8 h = stawka dzienna, 4 h = 6/8, 2 h = 4/8 tej stawki,
+- każda godzina po 22:00 (do 6:00) × 1,5 stawki godzinowej pakietu,
+- dojazd liczy się tylko w Niemczech: km od przejścia granicznego do miejsca × 2 × stawka za km;
+  przejście (Frankfurt (Oder), Görlitz, Forst, Pomellen, Waidhaus przez Czechy) wybierane automatycznie
+  po najkrótszej całej trasie z Warszawy / Katowic,
+- dojazd (z noclegami) najwyżej 30% ceny — inaczej cena rośnie do tego progu,
+- kilka dni: 2 dni −10%, od 3 dni −15%; ekipa zostaje na miejscu (jeden dojazd, opcjonalnie nocleg za każdy dzień).
+
+Stawek nie widać w CRM — ustawia się je zmiennymi w Railway (niżej). Kilometry: OpenStreetMap
+(Nominatim + OSRM); gdy serwis nie odpowiada — szacunek (linia prosta × 1,25).
 
 ## Wdrożenie na Railway
 
 1. Nowy projekt → Deploy from GitHub → to repo.
-2. Dodaj bazę **PostgreSQL** i podłącz `DATABASE_URL` do serwisu.
+2. **+ Add → Database → PostgreSQL**, potem w serwisie aplikacji zmienna `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`.
 3. Zmienne środowiskowe:
 
 | Zmienna | Opis |
 |---|---|
 | `DATABASE_URL` | z bazy PostgreSQL w Railway |
 | `SECRET_KEY` | dowolny długi losowy ciąg |
-| `CLICKUP_API_TOKEN` | token API ClickUp (Settings → Apps → API Token) |
-| `CLICKUP_LIST_ID` | ID listy ClickUp z leadami dla Posevo (liczba z adresu listy) |
+| `CLICKUP_API_TOKEN` | token API ClickUp (avatar → Settings → Apps → API Token, zaczyna się od `pk_`) |
+| `CLICKUP_LIST_ID` | ID listy ClickUp z leadami (liczba po `/li/` w adresie listy) |
 | `CLICKUP_POLL_SECONDS` | opcjonalnie, co ile sekund sprawdzać ClickUp (domyślnie 300) |
+| `CALC_DAY_PRICE` | opcjonalnie, stawka za dzień 8 h w € netto (domyślnie 2500) |
+| `CALC_KM_PRICE` | opcjonalnie, € za km od granicy (domyślnie 1.0) |
+| `CALC_LODGING` | opcjonalnie, € za nocleg ekipy za każdy dzień (domyślnie 0 = bez noclegu) |
+| `CALC_ROUND_TO` | opcjonalnie, zaokrąglenie ceny w górę do (domyślnie 100) |
 
-Tabele tworzą się same przy starcie.
+Tabele i nowe kolumny tworzą się same przy starcie.
 
 ## Import z ClickUp
 
-- Nazwa taska → firma. Pola formularza są rozpoznawane po nazwie, po niemiecku i po polsku,
-  np. „Telefon”, „E-Mail”, „Ansprechpartner”, „Ort”, „Datum”.
-- Pola, których nie udało się dopasować, trafiają do notatki leada, więc nic nie ginie.
-- Raz zaimportowanego leada import już nie nadpisuje, tylko uzupełnia puste pola.
+- Nazwa taska → firma. Pola formularza rozpoznawane po nazwie (niemieckie i polskie),
+  np. „Telefon”, „E-Mail”, „Ansprechpartner”, „Ort”, „Datum”; drugie pole e-mail → „Zweite E-Mail”.
+- Pola, których nie udało się dopasować, trafiają do notatki leada.
+- Raz zaimportowanego leada import nie nadpisuje, tylko uzupełnia puste pola.
 - Lead usunięty w CRM nie wraca przy kolejnym imporcie.
-- Jeśli osoba z zespołu ma w zakładce Team ten sam e-mail co w ClickUp, przypisane do niej
-  taski trafiają do niej automatycznie.
+- Osoba z zakładki Team z tym samym e-mailem co w ClickUp dostaje przypisane do niej taski automatycznie.
 
 ## Lokalnie
 
 ```
 pip install -r requirements.txt
-python app.py   # http://localhost:5000, baza SQLite posevo.db
+python app.py   # http://localhost:5000, baza SQLite crm-de.db
 ```
