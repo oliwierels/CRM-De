@@ -21,6 +21,16 @@
   <button class="btn btn-secondary">Suchen</button>
 </form>
 
+{% if mail_ok %}{% set backlog = mail_backlog() %}
+{% if backlog_running() %}
+<div class="flash">✉️ Versand an ältere Leads läuft — eine E-Mail alle 30 Sekunden.</div>
+{% elif backlog %}
+<form method="post" action="{{ url_for('customer_mail_backlog') }}" class="flash row" style="justify-content:space-between;flex-wrap:wrap"
+      onsubmit="return confirm('Kunden-E-Mail mit Rückruf-Link an {{ backlog|length }} ältere Leads senden? (eine E-Mail alle 30 Sekunden)')">
+  <span>✉️ {{ backlog|length }} ältere {{ 'Lead hat' if backlog|length == 1 else 'Leads haben' }} noch keine E-Mail mit Rückruf-Link bekommen.</span>
+  <button class="btn btn-primary btn-sm"><i class="bi bi-send"></i> Jetzt an alle senden</button>
+</form>
+{% endif %}{% endif %}
 <div class="row" style="margin-bottom:12px;flex-wrap:wrap;gap:6px">
   {% for key, label in [(STATUS_OPEN, 'Nicht unterschrieben'), (STATUS_SIGNED, 'Unterschrieben'), ('alle', 'Alle')] %}
     {% set n = counts.get(key, 0) if key != 'alle' else total %}
