@@ -943,6 +943,51 @@ def _mail_scheduler():
         time.sleep(MAIL_POLL_SECONDS)
 
 
+def mail_backlog():
+    """Ältere offene Leads mit E-Mail, die noch keine Kunden-Mail bekommen haben."""
+    return [l for l in Lead.query.filter(Lead.status == STATUS_OPEN, Lead.mail_sent_at.is_(None))
+            .order_by(Lead.created_at).all() if l.emails]
+
+
+_BACKLOG = {"running": False}
+BACKLOG_PAUSE_SECONDS = 30  # Abstand zwischen den Mails — schont die Domain
+
+
+@app.route("/kunden-mail/rueckstand", methods=["POST"])
+def customer_mail_backlog():
+    if not mailer.configured():
+        flash("Postfach nicht eingerichtet (SMTP_HOST / SMTP_PASS).")
+        return redirect(url_for("leads"))
+    if _BACKLOG["running"]:
+        flash("Der Versand läuft bereits.")
+        return redirect(url_for("leads"))
+    ids = [l.id for l in mail_backlog()]
+    me = current_user()
+    uid = me.id if me else None
+
+    def run():
+        _BACKLOG["running"] = True
+        try:
+            for i, lid in enumerate(ids):
+                with app.app_context():
+                    lead = db.session.get(Lead, lid)
+                    if lead and not lead.mail_sent_at and lead.emails:
+                        err = send_customer_mail(lead, user_id=uid)
+                        if err:
+                            db.session.rollback()
+                            _add_comment(lid, f"⚠️ Kunden-E-Mail nicht gesendet: {err}", "system")
+                            db.session.commit()
+                    db.session.remove()
+                if i < len(ids) - 1:
+                    time.sleep(BACKLOG_PAUSE_SECONDS)
+        finally:
+            _BACKLOG["running"] = False
+    threading.Thread(target=run, daemon=True).start()
+    flash(f"Versand an {len(ids)} ältere Leads gestartet — eine E-Mail alle {BACKLOG_PAUSE_SECONDS} Sekunden "
+          f"(ca. {max(1, len(ids) * BACKLOG_PAUSE_SECONDS // 60)} Min.). Gesendete Mails erscheinen in den Kommentaren.")
+    return redirect(url_for("leads"))
+
+
 @app.route("/lead/<int:lead_id>/kunden-mail", methods=["POST"])
 def lead_customer_mail(lead_id):
     lead = db.session.get(Lead, lead_id) or abort(404)
@@ -1003,7 +1048,8 @@ def callback_form(token):
     return render_template("callback_form.html", lead=lead, done=True, slots=CALLBACK_SLOTS, today=today)
 
 
-app.jinja_env.globals.update(callback_label=callback_label, mail_ready=mailer.configured)
+app.jinja_env.globals.update(callback_label=callback_label, mail_ready=mailer.configured, mail_backlog=mail_backlog,
+                             backlog_running=lambda: _BACKLOG["running"])
 
 @app.route("/health")
 def health():
