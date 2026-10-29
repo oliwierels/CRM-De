@@ -842,15 +842,21 @@ def mail_tick():
     sync_mailbox()
 
 
-def sync_mailbox():
-    """E-Mails mit Kunden (Eingang + Gesendet) als Kommentare an den passenden Lead hängen."""
+def sync_mailbox(days_back=None, stats=None):
+    """E-Mails mit Kunden (Eingang + Gesendet) als Kommentare an die passenden Leads hängen.
+    stats (dict) bekommt eine Zusammenfassung für die Anzeige nach dem manuellen Abgleich."""
+    stats = stats if stats is not None else {}
     last = get_setting(MAIL_SYNC_KEY)
-    start = (datetime.fromisoformat(last) - timedelta(days=2)) if last else datetime.utcnow() - timedelta(days=14)
+    if days_back:
+        start = datetime.utcnow() - timedelta(days=days_back)
+    else:
+        start = (datetime.fromisoformat(last) - timedelta(days=2)) if last else datetime.utcnow() - timedelta(days=14)
     by_addr = {}
     for lead in Lead.query.all():
         for e in lead.emails:
-            by_addr.setdefault(e.lower(), lead)
+            by_addr.setdefault(e.lower(), []).append(lead)
     if not by_addr:
+        stats["info"] = "keine Leads mit E-Mail-Adresse"
         return 0
     added, errors = 0, []
     for folder in ("INBOX", "SENT"):
@@ -861,25 +867,35 @@ def sync_mailbox():
             continue
         if folder == "SENT" and mailer.fetch.last_folder is None:
             errors.append("Ordner „Gesendet“ nicht gefunden — IMAP_SENT_FOLDER in Railway setzen")
+        key = "eingang" if folder == "INBOX" else "gesendet"
+        stats[key] = {"ordner": mailer.fetch.last_folder, "geprueft": len(msgs), "neu": 0,
+                      "ohne_lead": 0, "schon_da": 0}
         for m in msgs:
             if db.session.get(MailSeen, m["message_id"]):
+                stats[key]["schon_da"] += 1
                 continue
             text = mailer.strip_reply(m["text"])
-            if folder == "INBOX" and m["from"] in by_addr:
-                lead = by_addr[m["from"]]
-                db.session.add(MailSeen(message_id=m["message_id"]))
-                _add_comment(lead.id, f"✉️ Von {m['from']} · Betreff: {m['subject']}\n\n{text}", "mail_in", m["date"])
-                notify_team(f"Antwort vom Kunden: {lead.company}",
-                            f"{m['from']} schreibt ({m['subject']}):\n\n{text[:1500]}\n\nIm CRM öffnen: {lead_url(lead)}")
-                added += 1
-            elif folder == "SENT":
-                # alles im Ordner „Gesendet“ ist von uns — egal mit welchem Absendernamen/Alias
-                lead = next((by_addr[a] for a in m["to"] if a in by_addr), None)
-                if lead:
+            if folder == "INBOX":
+                leads = by_addr.get(m["from"], [])
+                for lead in leads:
+                    _add_comment(lead.id, f"✉️ Von {m['from']} · Betreff: {m['subject']}\n\n{text}", "mail_in", m["date"])
+                if leads:
                     db.session.add(MailSeen(message_id=m["message_id"]))
+                    notify_team(f"Antwort vom Kunden: {leads[0].company}",
+                                f"{m['from']} schreibt ({m['subject']}):\n\n{text[:1500]}\n\nIm CRM öffnen: {lead_url(leads[0])}")
+            else:
+                # alles im Ordner „Gesendet“ ist von uns — egal mit welchem Absendernamen/Alias
+                leads = list({l.id: l for a in m["to"] for l in by_addr.get(a, [])}.values())
+                for lead in leads:
                     _add_comment(lead.id, f"✉️ An {', '.join(m['to'])} · Betreff: {m['subject']}\n\n{text}",
                                  "mail_out", m["date"])
-                    added += 1
+                if leads:
+                    db.session.add(MailSeen(message_id=m["message_id"]))
+            if leads:
+                added += 1
+                stats[key]["neu"] += 1
+            else:
+                stats[key]["ohne_lead"] += 1
             # nicht zugeordnete Mails nicht als „gesehen“ markieren — kommt der Lead später, wird nachgeholt
     set_setting(MAIL_SYNC_KEY, datetime.utcnow().isoformat(timespec="seconds"))
     set_setting("mail_sync_error", " · ".join(errors))
@@ -894,9 +910,17 @@ def mailbox_sync_now():
         return redirect(request.referrer or url_for("leads"))
     with _MAIL_LOCK:
         try:
-            n = sync_mailbox()
+            st = {}
+            n = sync_mailbox(days_back=14, stats=st)
             err = get_setting("mail_sync_error")
-            flash(f"Postfach abgeglichen: {n} neue E-Mails im Verlauf." + (f" Problem: {err}" if err else ""))
+            parts = []
+            for key, label in (("eingang", "Posteingang"), ("gesendet", "Gesendet")):
+                x = st.get(key)
+                if x:
+                    parts.append(f"{label} ({x['ordner'] or '—'}): {x['geprueft']} Mails der letzten 14 Tage, "
+                                 f"{x['neu']} neu zugeordnet, {x['schon_da']} schon im Verlauf, {x['ohne_lead']} ohne passenden Lead")
+            flash(f"Postfach abgeglichen: {n} neue E-Mails im Verlauf. " + " · ".join(parts)
+                  + (f" · {st['info']}" if st.get("info") else "") + (f" · Problem: {err}" if err else ""))
         except Exception as e:
             db.session.rollback()
             flash(f"Postfach-Abgleich fehlgeschlagen: {type(e).__name__}: {e}"[:300])
