@@ -392,7 +392,9 @@ def leads():
     counts = dict(db.session.query(Lead.status, db.func.count(Lead.id)).group_by(Lead.status).all())
     return render_template("leads.html", leads=rows, status=status, q=q, who=who, counts=counts,
                            total=sum(counts.values()), clickup_ok=clickup_configured(),
-                           last_sync=get_setting("clickup_last_sync"), last_error=get_setting("clickup_last_error"))
+                           last_sync=get_setting("clickup_last_sync"), last_error=get_setting("clickup_last_error"),
+                           mail_ok=mailer.configured(), mail_sync=get_setting("mail_last_sync"),
+                           mail_error=get_setting("mail_sync_error"))
 
 
 @app.route("/lead/<int:lead_id>")
@@ -710,6 +712,7 @@ def calculator_save():
 # des Kunden. Der Schriftverkehr aus dem Postfach (Eingang + Gesendet) erscheint als Kommentare.
 # Nur Leads, die nach dem Einschalten neu dazukommen; ältere per Knopf auf der Lead-Seite.
 
+_MAIL_LOCK = threading.Lock()
 MAIL_SINCE_KEY = "mail_since"
 MAIL_SYNC_KEY = "mail_last_sync"
 MAIL_POLL_SECONDS = 300
@@ -849,36 +852,56 @@ def sync_mailbox():
             by_addr.setdefault(e.lower(), lead)
     if not by_addr:
         return 0
-    own = mailer.config()["user"].lower()
-    added = 0
+    added, errors = 0, []
     for folder in ("INBOX", "SENT"):
         try:
             msgs = mailer.fetch(folder, start.date())
-        except Exception:
+        except Exception as e:
+            errors.append(f"{'Posteingang' if folder == 'INBOX' else 'Gesendet'}: {type(e).__name__}: {e}"[:200])
             continue
+        if folder == "SENT" and mailer.fetch.last_folder is None:
+            errors.append("Ordner „Gesendet“ nicht gefunden — IMAP_SENT_FOLDER in Railway setzen")
         for m in msgs:
             if db.session.get(MailSeen, m["message_id"]):
                 continue
-            db.session.add(MailSeen(message_id=m["message_id"]))
             text = mailer.strip_reply(m["text"])
             if folder == "INBOX" and m["from"] in by_addr:
                 lead = by_addr[m["from"]]
+                db.session.add(MailSeen(message_id=m["message_id"]))
                 _add_comment(lead.id, f"✉️ Von {m['from']} · Betreff: {m['subject']}\n\n{text}", "mail_in", m["date"])
                 notify_team(f"Antwort vom Kunden: {lead.company}",
                             f"{m['from']} schreibt ({m['subject']}):\n\n{text[:1500]}\n\nIm CRM öffnen: {lead_url(lead)}")
                 added += 1
-            elif folder == "SENT" and m["from"] == own:
+            elif folder == "SENT":
+                # alles im Ordner „Gesendet“ ist von uns — egal mit welchem Absendernamen/Alias
                 lead = next((by_addr[a] for a in m["to"] if a in by_addr), None)
                 if lead:
+                    db.session.add(MailSeen(message_id=m["message_id"]))
                     _add_comment(lead.id, f"✉️ An {', '.join(m['to'])} · Betreff: {m['subject']}\n\n{text}",
                                  "mail_out", m["date"])
                     added += 1
+            # nicht zugeordnete Mails nicht als „gesehen“ markieren — kommt der Lead später, wird nachgeholt
     set_setting(MAIL_SYNC_KEY, datetime.utcnow().isoformat(timespec="seconds"))
+    set_setting("mail_sync_error", " · ".join(errors))
     db.session.commit()
     return added
 
 
-_MAIL_LOCK = threading.Lock()
+@app.route("/postfach/abgleichen", methods=["POST"])
+def mailbox_sync_now():
+    if not mailer.configured():
+        flash("Postfach nicht eingerichtet (SMTP_HOST / SMTP_PASS in Railway).")
+        return redirect(request.referrer or url_for("leads"))
+    with _MAIL_LOCK:
+        try:
+            n = sync_mailbox()
+            err = get_setting("mail_sync_error")
+            flash(f"Postfach abgeglichen: {n} neue E-Mails im Verlauf." + (f" Problem: {err}" if err else ""))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Postfach-Abgleich fehlgeschlagen: {type(e).__name__}: {e}"[:300])
+    target = request.form.get("next") or ""
+    return redirect(target if target.startswith("/") and not target.startswith("//") else url_for("leads"))
 
 
 def _mail_scheduler():

@@ -101,6 +101,12 @@
     <div class="panel">
       <div class="panel-header"><i class="bi bi-chat-left-text"></i> Kommentare & E-Mail-Verlauf ({{ lead.comments|length }})</div>
       <div class="panel-body">
+        {% if mail_ready() %}
+        <form method="post" action="{{ url_for('mailbox_sync_now') }}" style="margin-bottom:8px">
+          <input type="hidden" name="next" value="{{ url_for('lead_detail', lead_id=lead.id) }}">
+          <button class="btn btn-secondary btn-sm" title="Neue E-Mails aus o.latek@33bots.de (Posteingang und Gesendet) jetzt holen"><i class="bi bi-arrow-repeat"></i> E-Mails jetzt abrufen</button>
+        </form>
+        {% endif %}
         <form method="post" action="{{ url_for('lead_comment', lead_id=lead.id) }}" class="row" style="align-items:flex-start">
           <textarea name="text" rows="2" placeholder="{{ 'Kommentar als ' ~ me.name if me else 'Kommentar (links auswählen, wer du bist)' }}" required></textarea>
           <button class="btn btn-primary">Hinzufügen</button>
